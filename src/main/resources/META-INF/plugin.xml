@@ -1,11 +1,20 @@
-<idea-plugin package="org.kkkzbh.cph">
+<idea-plugin package="org.kkkzbh.cph" url="https://github.com/kkkzbh/CPH">
     <id>org.kkkzbh.cph</id>
     <name>CPH Target Runner</name>
-    <vendor>kkkzbh</vendor>
+    <vendor email="kkkzbh@vip.qq.com" url="https://github.com/kkkzbh/CPH">kkkzbh</vendor>
     <description><![CDATA[
-        A CLion side-bar helper for competitive-programming samples.
-        Cases are stored independently for each selected CMake run target and compared through stdin/stdout.
+        A CLion sidebar helper for competitive-programming samples.
+        Manage sample cases per CMake target, run them quickly, compare outputs, and inspect mismatched lines.
     ]]></description>
+    <change-notes><![CDATA[
+        <ul>
+          <li>Initial public release.</li>
+          <li>Case management for the active CMake target.</li>
+          <li>Run selected or all enabled cases.</li>
+          <li>Line-numbered editors and mismatched-line highlighting.</li>
+          <li>Configurable time limit and whitespace comparison behavior.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>

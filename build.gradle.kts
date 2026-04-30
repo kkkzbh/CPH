@@ -44,8 +44,8 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         description = """
-            A lightweight competitive-programming helper for CLion.
-            Test cases are stored per selected CMake run target and executed through CLion run configurations.
+            A CLion sidebar helper for competitive-programming samples.
+            Manage sample cases per CMake target, run them quickly, compare outputs, and inspect mismatched lines.
         """.trimIndent()
 
         ideaVersion {
