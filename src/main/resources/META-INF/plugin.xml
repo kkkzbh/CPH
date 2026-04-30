@@ -1,0 +1,20 @@
+<idea-plugin package="org.kkkzbh.cph">
+    <id>org.kkkzbh.cph</id>
+    <name>CPH Target Runner</name>
+    <vendor>kkkzbh</vendor>
+    <description><![CDATA[
+        A CLion side-bar helper for competitive-programming samples.
+        Cases are stored independently for each selected CMake run target and compared through stdin/stdout.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.clion</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="org.kkkzbh.cph.CphStateService" />
+        <toolWindow id="CPH"
+                    anchor="right"
+                    factoryClass="org.kkkzbh.cph.CphToolWindowFactory"
+                    canCloseContents="false" />
+    </extensions>
+</idea-plugin>
