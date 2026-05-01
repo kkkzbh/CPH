@@ -65,6 +65,12 @@ intellijPlatform {
     publishing {
         token = marketplaceToken
     }
+
+    pluginVerification {
+        ides {
+            recommended()
+        }
+    }
 }
 
 tasks.named("buildSearchableOptions").configure {

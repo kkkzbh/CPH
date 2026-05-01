@@ -557,21 +557,22 @@ class CphRunner(private val project: Project) {
     private fun resolveExecutionTarget(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
     ): ExecutionTarget {
+        val configuration = settings.configuration
         val activeTarget = ExecutionTargetManager.getActiveTarget(project)
-        if (ExecutionTargetManager.canRun(settings, activeTarget)) {
+        if (ExecutionTargetManager.canRun(configuration, activeTarget)) {
             log.info("CPH using active execution target '${activeTarget.displayName}' for '${settings.name}'")
             return activeTarget
         }
 
         val manager = ExecutionTargetManager.getInstance(project)
-        val foundTarget = manager.findTarget(settings.configuration)
-        if (foundTarget != null && ExecutionTargetManager.canRun(settings, foundTarget)) {
+        val foundTarget = manager.findTarget(configuration)
+        if (foundTarget != null && ExecutionTargetManager.canRun(configuration, foundTarget)) {
             log.info("CPH using discovered execution target '${foundTarget.displayName}' for '${settings.name}'")
             return foundTarget
         }
 
-        val candidate = ExecutionTargetManager.getTargetsToChooseFor(project, settings.configuration)
-            .firstOrNull { ExecutionTargetManager.canRun(settings.configuration, it) }
+        val candidate = ExecutionTargetManager.getTargetsToChooseFor(project, configuration)
+            .firstOrNull { ExecutionTargetManager.canRun(configuration, it) }
         if (candidate != null) {
             log.info("CPH using candidate execution target '${candidate.displayName}' for '${settings.name}'")
             return candidate

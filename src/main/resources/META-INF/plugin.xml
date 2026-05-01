@@ -16,7 +16,6 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
-    <depends>intellij.clion.runFile</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="org.kkkzbh.cph.CphStateService" />

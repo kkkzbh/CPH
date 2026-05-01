@@ -494,10 +494,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 scheduleTargetRefresh()
             }
 
-            override fun runConfigurationSelected() {
-                scheduleTargetRefresh()
-            }
-
             override fun runConfigurationChanged(settings: RunnerAndConfigurationSettings) {
                 if (settings === RunManager.getInstance(project).selectedConfiguration) {
                     scheduleTargetRefresh()
