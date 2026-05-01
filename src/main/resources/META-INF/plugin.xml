@@ -8,19 +8,19 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Initial public release.</li>
-          <li>Case management for the active CMake target.</li>
-          <li>Run selected or all enabled cases.</li>
-          <li>Line-numbered editors and mismatched-line highlighting.</li>
-          <li>Configurable time limit and whitespace comparison behavior.</li>
+          <li>Fix C/C++ File run configurations by using CLion run-file build and launcher APIs.</li>
+          <li>Add per-run-configuration sample storage for CMake and single-file targets.</li>
+          <li>Improve error notifications, target refresh behavior, and case tab status display.</li>
         </ul>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
+    <depends>intellij.clion.runFile</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="org.kkkzbh.cph.CphStateService" />
+        <notificationGroup id="CPH Target Runner" displayType="BALLOON" />
         <toolWindow id="CPH"
                     anchor="right"
                     factoryClass="org.kkkzbh.cph.CphToolWindowFactory"

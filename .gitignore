@@ -4,6 +4,13 @@
 .plugin-backups/
 build/
 
+.env
+.env.*
+*.log
+*.hprof
+hs_err_pid*
+replay_pid*
+
 .idea/
 *.iml
 

@@ -3,21 +3,21 @@ package org.kkkzbh.cph
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
+import com.intellij.execution.Executor
+import com.intellij.execution.BeforeRunTaskProvider
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.executors.DefaultRunExecutor
-import com.intellij.execution.process.ProcessAdapter
-import com.intellij.execution.process.ProcessEvent
-import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.process.ProcessOutputTypes
+import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Key
 import java.io.File
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 
 class CphRunner(private val project: Project) {
     private val log = Logger.getInstance(CphRunner::class.java)
@@ -35,72 +35,40 @@ class CphRunner(private val project: Project) {
             return CphCaseResult(CphVerdict.ERROR, message = identity.message)
         }
 
-        return runExecutableFallback(settings, testCase, timeoutMillis, ignoreTrailingWhitespace, null)
+        return when (identity.kind) {
+            CphTargetKind.CMAKE_APP -> runExecutableFallback(settings, testCase, timeoutMillis, ignoreTrailingWhitespace, null)
+            CphTargetKind.CPP_FILE -> runCppFileConfiguration(settings, testCase, timeoutMillis, ignoreTrailingWhitespace)
+            CphTargetKind.UNSUPPORTED -> CphCaseResult(CphVerdict.ERROR, message = identity.message)
+        }
     }
 
-    private fun startProcess(
+    private fun runCppFileConfiguration(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
-        resultFuture: java.util.concurrent.CompletableFuture<CphCaseResult>,
-        stdout: StringBuilder,
-        stderr: StringBuilder,
-        startedAt: Long,
-    ): ProcessHandler {
-        val executor = DefaultRunExecutor.getRunExecutorInstance()
-        val configuration = settings.configuration
-        val runner = ProgramRunner.getRunner(executor.id, configuration)
-            ?: throw ExecutionException("No runner is available for ${settings.name}.")
+        testCase: CphTestCase,
+        timeoutMillis: Long,
+        ignoreTrailingWhitespace: Boolean,
+    ): CphCaseResult {
+        val setupStartedAt = System.nanoTime()
+        return try {
+            val context = buildDefaultRunContext(settings)
+            val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
+            if (buildResult != null) return buildResult
 
-        val executionResult: com.intellij.execution.ExecutionResult = if (ApplicationManager.getApplication().isDispatchThread) {
-            val environment = buildEnvironment(settings, runner)
-            settings.checkSettings(executor)
-            val state = configuration.getState(executor, environment)
-                ?: throw ExecutionException("Run configuration did not provide a run state.")
-            state.execute(executor, runner) ?: throw ExecutionException("Run configuration did not start.")
-        } else {
-            val holder = arrayOfNulls<com.intellij.execution.ExecutionResult>(1)
-            val error = arrayOfNulls<Throwable>(1)
-            ApplicationManager.getApplication().invokeAndWait {
-                try {
-                    val environment = buildEnvironment(settings, runner)
-                    settings.checkSettings(executor)
-                    val state = configuration.getState(executor, environment)
-                        ?: throw ExecutionException("Run configuration did not provide a run state.")
-                    holder[0] = state.execute(executor, runner)
-                } catch (e: Throwable) {
-                    error[0] = e
-                }
-            }
-            error[0]?.let { throw it }
-            holder[0] ?: throw ExecutionException("Run configuration did not start.")
+            val commandLine = resolveCppFileCommandLine(settings, context.executor, context.environment)
+            runCommandLine(
+                commandLine = commandLine,
+                testCase = testCase,
+                timeoutMillis = timeoutMillis,
+                ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                runnerLabel = "CLion C/C++ File runner",
+            )
+        } catch (e: Exception) {
+            CphCaseResult(
+                verdict = CphVerdict.ERROR,
+                durationMillis = elapsedMillis(setupStartedAt),
+                message = e.message ?: e.javaClass.simpleName,
+            )
         }
-
-        val processHandler = executionResult.processHandler
-            ?: throw ExecutionException("Run configuration did not provide a process handler.")
-
-        processHandler.addProcessListener(object : ProcessAdapter() {
-            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
-                when (outputType) {
-                    ProcessOutputTypes.STDOUT -> stdout.append(event.text)
-                    ProcessOutputTypes.STDERR -> stderr.append(event.text)
-                }
-            }
-
-            override fun processTerminated(event: ProcessEvent) {
-                val exitCode = event.exitCode
-                resultFuture.complete(
-                    CphCaseResult(
-                        verdict = if (exitCode == 0) CphVerdict.NOT_RUN else CphVerdict.RE,
-                        actualOutput = stdout.toString(),
-                        stderr = stderr.toString(),
-                        exitCode = exitCode,
-                        durationMillis = elapsedMillis(startedAt),
-                        message = if (exitCode == 0) "Process finished." else "Process exited with code $exitCode.",
-                    ),
-                )
-            }
-        })
-
-        return processHandler
     }
 
     private fun runExecutableFallback(
@@ -122,62 +90,14 @@ class CphRunner(private val project: Project) {
                 throw ExecutionException("Executable is not ready: ${executable.absolutePath}")
             }
 
-            val startedAt = System.nanoTime()
-            val process = ProcessBuilder(executable.absolutePath)
-                .directory(File(project.basePath ?: executable.parentFile.absolutePath))
-                .start()
-
-            val stdoutFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-                process.inputStream.bufferedReader().readText()
-            }
-            val stderrFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-                process.errorStream.bufferedReader().readText()
-            }
-
-            process.outputStream.use { stream ->
-                stream.write(testCase.input.toByteArray(StandardCharsets.UTF_8))
-                stream.flush()
-            }
-
-            val finished = process.waitFor(timeoutMillis.coerceAtLeast(1) + 100, TimeUnit.MILLISECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                CphCaseResult(
-                    verdict = CphVerdict.TLE,
-                    actualOutput = stdoutFuture.getNow(""),
-                    stderr = stderrFuture.getNow(""),
-                    durationMillis = elapsedMillis(startedAt),
-                    message = "Time limit exceeded after ${timeoutMillis}ms.",
-                )
-            } else {
-                val actualOutput = stdoutFuture.get(1, TimeUnit.SECONDS)
-                val stderr = stderrFuture.get(1, TimeUnit.SECONDS)
-                val exitCode = process.exitValue()
-                if (exitCode != 0) {
-                    CphCaseResult(
-                        verdict = CphVerdict.RE,
-                        actualOutput = actualOutput,
-                        stderr = stderr,
-                        exitCode = exitCode,
-                        durationMillis = elapsedMillis(startedAt),
-                        message = "Process exited with code $exitCode.",
-                    )
-                } else {
-                    val (accepted, message) = CphComparator.compare(
-                        actual = actualOutput,
-                        expected = testCase.expectedOutput,
-                        ignoreTrailingWhitespace = ignoreTrailingWhitespace,
-                    )
-                    CphCaseResult(
-                        verdict = if (accepted) CphVerdict.AC else CphVerdict.WA,
-                        actualOutput = actualOutput,
-                        stderr = stderr,
-                        exitCode = exitCode,
-                        durationMillis = elapsedMillis(startedAt),
-                        message = "$message (fallback executable runner)",
-                    )
-                }
-            }
+            runLocalExecutable(
+                executable = executable,
+                workingDir = File(project.basePath ?: executable.parentFile.absolutePath),
+                testCase = testCase,
+                timeoutMillis = timeoutMillis,
+                ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                runnerLabel = "fallback executable runner",
+            )
         } catch (e: Exception) {
             CphCaseResult(
                 verdict = CphVerdict.ERROR,
@@ -187,10 +107,115 @@ class CphRunner(private val project: Project) {
         }
     }
 
+    private fun runLocalExecutable(
+        executable: File,
+        workingDir: File,
+        testCase: CphTestCase,
+        timeoutMillis: Long,
+        ignoreTrailingWhitespace: Boolean,
+        runnerLabel: String,
+    ): CphCaseResult {
+        return runProcess(
+            startProcess = {
+                ProcessBuilder(executable.absolutePath)
+                    .directory(workingDir)
+                    .start()
+            },
+            testCase = testCase,
+            timeoutMillis = timeoutMillis,
+            ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+            runnerLabel = runnerLabel,
+        )
+    }
+
+    private fun runCommandLine(
+        commandLine: GeneralCommandLine,
+        testCase: CphTestCase,
+        timeoutMillis: Long,
+        ignoreTrailingWhitespace: Boolean,
+        runnerLabel: String,
+    ): CphCaseResult {
+        return runProcess(
+            startProcess = { commandLine.createProcess() },
+            testCase = testCase,
+            timeoutMillis = timeoutMillis,
+            ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+            runnerLabel = runnerLabel,
+        )
+    }
+
+    private fun runProcess(
+        startProcess: () -> Process,
+        testCase: CphTestCase,
+        timeoutMillis: Long,
+        ignoreTrailingWhitespace: Boolean,
+        runnerLabel: String,
+    ): CphCaseResult {
+        val startedAt = System.nanoTime()
+        val process = startProcess()
+
+        val stdoutFuture = java.util.concurrent.CompletableFuture.supplyAsync {
+            process.inputStream.bufferedReader().readText()
+        }
+        val stderrFuture = java.util.concurrent.CompletableFuture.supplyAsync {
+            process.errorStream.bufferedReader().readText()
+        }
+
+        process.outputStream.use { stream ->
+            stream.write(testCase.input.toByteArray(StandardCharsets.UTF_8))
+            stream.flush()
+        }
+
+        val finished = process.waitFor(timeoutMillis.coerceAtLeast(1) + 100, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return CphCaseResult(
+                verdict = CphVerdict.TLE,
+                actualOutput = stdoutFuture.getNow(""),
+                stderr = stderrFuture.getNow(""),
+                durationMillis = elapsedMillis(startedAt),
+                message = "Time limit exceeded after ${timeoutMillis}ms.",
+            )
+        }
+
+        val actualOutput = stdoutFuture.get(1, TimeUnit.SECONDS)
+        val stderr = stderrFuture.get(1, TimeUnit.SECONDS)
+        val exitCode = process.exitValue()
+        if (exitCode != 0) {
+            return CphCaseResult(
+                verdict = CphVerdict.RE,
+                actualOutput = actualOutput,
+                stderr = stderr,
+                exitCode = exitCode,
+                durationMillis = elapsedMillis(startedAt),
+                message = "Process exited with code $exitCode.",
+            )
+        }
+
+        val (accepted, message) = CphComparator.compare(
+            actual = actualOutput,
+            expected = testCase.expectedOutput,
+            ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+        )
+        return CphCaseResult(
+            verdict = if (accepted) CphVerdict.AC else CphVerdict.WA,
+            actualOutput = actualOutput,
+            stderr = stderr,
+            exitCode = exitCode,
+            durationMillis = elapsedMillis(startedAt),
+            message = "$message ($runnerLabel)",
+        )
+    }
+
     private data class CMakeLaunchPlan(
         val executable: File,
         val buildWorkingDir: File?,
         val buildTargetName: String?,
+    )
+
+    private data class DefaultRunContext(
+        val executor: Executor,
+        val environment: ExecutionEnvironment,
     )
 
     private data class CommandResult(
@@ -297,6 +322,84 @@ class CphRunner(private val project: Project) {
         }
 
         return BuildFreshness.UNKNOWN
+    }
+
+    private fun buildCppFileTarget(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        environment: ExecutionEnvironment,
+        startedAt: Long,
+    ): CphCaseResult? {
+        return try {
+            val configuration = settings.configuration
+            val provider = cppFileBuildBeforeRunTaskProvider()
+                ?: throw ExecutionException("Cannot find CLion C/C++ File build task provider.")
+            val task = provider.createTask(configuration)
+                ?: throw ExecutionException("Cannot create CLion C/C++ File build task for '${settings.name}'.")
+
+            val executeTask = provider.javaClass.methods.firstOrNull {
+                it.name == "executeTask" &&
+                    it.parameterCount == 4 &&
+                    it.parameterTypes[0].name == "com.intellij.openapi.actionSystem.DataContext" &&
+                    it.parameterTypes[1].isAssignableFrom(configuration.javaClass) &&
+                    it.parameterTypes[2].isAssignableFrom(environment.javaClass) &&
+                    it.parameterTypes[3].isAssignableFrom(task.javaClass)
+            } ?: throw ExecutionException("Cannot find CLion C/C++ File build executor.")
+
+            val ok = executeTask.invoke(provider, DataContext.EMPTY_CONTEXT, configuration, environment, task) as? Boolean
+                ?: false
+            if (ok) {
+                null
+            } else {
+                CphCaseResult(
+                    verdict = CphVerdict.ERROR,
+                    durationMillis = elapsedMillis(startedAt),
+                    message = "Build failed for C/C++ File configuration '${settings.name}'.",
+                )
+            }
+        } catch (e: Throwable) {
+            val cause = invocationCause(e)
+            CphCaseResult(
+                verdict = CphVerdict.ERROR,
+                durationMillis = elapsedMillis(startedAt),
+                message = "Build failed for C/C++ File configuration '${settings.name}': ${cause.message ?: cause.javaClass.simpleName}",
+            )
+        }
+    }
+
+    private fun cppFileBuildBeforeRunTaskProvider(): BeforeRunTaskProvider<*>? {
+        return BeforeRunTaskProvider.EP_NAME.getExtensions(project).firstOrNull {
+            it.javaClass.name == "com.jetbrains.cidr.cpp.runfile.CppFileBuildBeforeRunTaskProvider"
+        }
+    }
+
+    private fun resolveCppFileCommandLine(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        executor: Executor,
+        environment: ExecutionEnvironment,
+    ): GeneralCommandLine {
+        val configuration = settings.configuration
+        val state = configuration.getState(executor, environment)
+            ?: throw ExecutionException("Cannot create CLion run state for C/C++ File configuration '${settings.name}'.")
+        val launcher = cppFileLauncher(state)
+            ?: throw ExecutionException("Cannot access CLion C/C++ File launcher for '${settings.name}'.")
+
+        val runFileAndEnvironment = launcher.javaClass.methods.firstOrNull {
+            it.name == "getRunFileAndEnvironment" && it.parameterCount == 0
+        }?.let { invokeReflective(it, launcher) }
+            ?: throw ExecutionException("Cannot resolve CLion C/C++ File executable for '${settings.name}'.")
+        val runFile = pairComponent(runFileAndEnvironment, "component1") as? File
+            ?: throw ExecutionException("CLion C/C++ File launcher did not return an executable for '${settings.name}'.")
+        if (!runFile.isFile) {
+            throw ExecutionException("Executable is not ready: ${runFile.absolutePath}")
+        }
+        val cppEnvironment = pairComponent(runFileAndEnvironment, "component2")
+            ?: throw ExecutionException("CLion C/C++ File launcher did not return a toolchain environment for '${settings.name}'.")
+
+        val createCommandLine = findMethodInHierarchy(launcher.javaClass, "createCommandLine", 5)
+            ?: throw ExecutionException("Cannot create CLion command line for C/C++ File configuration '${settings.name}'.")
+        createCommandLine.isAccessible = true
+        return invokeReflective(createCommandLine, launcher, state, runFile, cppEnvironment, false, false) as? GeneralCommandLine
+            ?: throw ExecutionException("CLion C/C++ File launcher returned an invalid command line for '${settings.name}'.")
     }
 
     private fun resolveCMakeLaunchPlan(
@@ -429,10 +532,24 @@ class CphRunner(private val project: Project) {
         return runCatching { method.invoke(value, *args) as? File }.getOrNull()
     }
 
+    private fun buildDefaultRunContext(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+    ): DefaultRunContext {
+        val configuration = settings.configuration
+        val executor = DefaultRunExecutor.getRunExecutorInstance()
+        val runner = ProgramRunner.getRunner(executor.id, configuration)
+            ?: throw ExecutionException("No runner is available for ${settings.name}.")
+        return DefaultRunContext(
+            executor = executor,
+            environment = buildEnvironment(settings, runner, executor),
+        )
+    }
+
     private fun buildEnvironment(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
         runner: ProgramRunner<*>,
-    ) = ExecutionEnvironmentBuilder(project, DefaultRunExecutor.getRunExecutorInstance())
+        executor: Executor = DefaultRunExecutor.getRunExecutorInstance(),
+    ) = ExecutionEnvironmentBuilder(project, executor)
         .runnerAndSettings(runner, settings)
         .target(resolveExecutionTarget(settings))
         .build()
@@ -465,14 +582,66 @@ class CphRunner(private val project: Project) {
         )
     }
 
-    private fun writeInput(processHandler: ProcessHandler, input: String) {
-        val stream = processHandler.processInput ?: return
-        stream.write(input.toByteArray(StandardCharsets.UTF_8))
-        stream.flush()
-        stream.close()
-    }
-
     private fun elapsedMillis(startedAt: Long): Long {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+    }
+
+    private fun invocationCause(error: Throwable): Throwable {
+        return if (error is InvocationTargetException && error.targetException != null) {
+            error.targetException
+        } else {
+            error
+        }
+    }
+
+    private fun pairComponent(pair: Any, componentName: String): Any? {
+        val component = pair.javaClass.methods.firstOrNull {
+            it.name == componentName && it.parameterCount == 0
+        } ?: throw ExecutionException("Cannot read CLion launcher result $componentName.")
+        return invokeReflective(component, pair)
+    }
+
+    private fun invokeReflective(method: Method, target: Any, vararg args: Any?): Any? {
+        return try {
+            method.invoke(target, *args)
+        } catch (e: InvocationTargetException) {
+            val cause = invocationCause(e)
+            if (cause is Exception) {
+                throw cause
+            }
+            throw ExecutionException(cause.message ?: cause.javaClass.simpleName)
+        }
+    }
+
+    companion object {
+        internal fun cppFileLauncher(state: Any): Any? {
+            if (isCppFileLauncher(state)) return state
+
+            val launcher = state.javaClass.methods.firstOrNull {
+                it.name == "getLauncher" && it.parameterCount == 0
+            }?.let { method ->
+                runCatching { method.invoke(state) }.getOrNull()
+            } ?: return null
+
+            return launcher.takeIf(::isCppFileLauncher)
+        }
+
+        private fun isCppFileLauncher(candidate: Any): Boolean {
+            val canResolveRunFile = candidate.javaClass.methods.any {
+                it.name == "getRunFileAndEnvironment" && it.parameterCount == 0
+            }
+            return canResolveRunFile && findMethodInHierarchy(candidate.javaClass, "createCommandLine", 5) != null
+        }
+
+        private fun findMethodInHierarchy(type: Class<*>, name: String, parameterCount: Int): Method? {
+            var current: Class<*>? = type
+            while (current != null) {
+                current.declaredMethods.firstOrNull {
+                    it.name == name && it.parameterCount == parameterCount
+                }?.let { return it }
+                current = current.superclass
+            }
+            return null
+        }
     }
 }

@@ -10,9 +10,13 @@ plugins {
 group = providers.gradleProperty("pluginGroup").get()
 version = providers.gradleProperty("pluginVersion").get()
 
+val platformVersion = providers.gradleProperty("platformVersion")
+val useLocalClion = providers.gradleProperty("useLocalClion")
+    .map(String::toBooleanStrictOrNull)
+    .orElse(false)
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
-    .get()
+val marketplaceToken = providers.environmentVariable("JB_MARKETPLACE_TOKEN")
 
 kotlin {
     jvmToolchain(21)
@@ -34,7 +38,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        local(clionLocalPath)
+        if (useLocalClion.get()) {
+            local(clionLocalPath.get())
+        } else {
+            clion(platformVersion.get())
+        }
+        bundledPlugin("com.intellij.clion")
         testFramework(TestFrameworkType.Platform)
     }
 }
@@ -51,6 +60,10 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
         }
+    }
+
+    publishing {
+        token = marketplaceToken
     }
 }
 

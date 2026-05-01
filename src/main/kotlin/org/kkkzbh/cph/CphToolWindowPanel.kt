@@ -1,9 +1,20 @@
 package org.kkkzbh.cph
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.execution.ExecutionTarget
+import com.intellij.execution.ExecutionTargetListener
+import com.intellij.execution.ExecutionTargetManager
+import com.intellij.execution.RunManager
+import com.intellij.execution.RunManagerListener
+import com.intellij.execution.RunnerAndConfigurationSettings
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.StatusBar
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -11,6 +22,7 @@ import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
@@ -28,6 +40,7 @@ import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.border.CompoundBorder
 import javax.swing.border.EmptyBorder
@@ -36,28 +49,94 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.text.Highlighter
 import javax.swing.text.JTextComponent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 
-class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
+internal object CphUiText {
+    fun errorTooltip(caseName: String, result: CphCaseResult): String {
+        val summary = "$caseName: error in ${formatDuration(result.durationMillis)}"
+        val message = result.message.takeIf { it.isNotBlank() } ?: return summary
+        return "$summary: $message"
+    }
+
+    fun errorStatusMessage(caseName: String, result: CphCaseResult): String {
+        val code = if (isCompileLikeError(result)) "CE" else "ERR"
+        return "CPH: $caseName $code - ${errorSummary(result)}"
+    }
+
+    fun errorNotificationContent(caseName: String, result: CphCaseResult): String {
+        val exit = result.exitCode?.let { ", exit $it" }.orEmpty()
+        return "${errorStatusMessage(caseName, result)} (${formatDuration(result.durationMillis)}$exit)"
+    }
+
+    fun formatDuration(durationMillis: Long): String {
+        return if (durationMillis >= 1000) {
+            val seconds = durationMillis / 1000.0
+            "%.1fs".format(seconds)
+        } else {
+            "${durationMillis}ms"
+        }
+    }
+
+    private fun errorSummary(result: CphCaseResult): String {
+        val message = result.message.trim().trimEnd('.', ':')
+        val detail = firstNonBlankLine(result.stderr).ifBlank {
+            firstNonBlankLine(result.actualOutput)
+        }
+        return when {
+            message.isNotBlank() && detail.isNotBlank() -> "$message: $detail"
+            message.isNotBlank() -> message
+            detail.isNotBlank() -> detail
+            else -> "Unknown CPH error."
+        }
+    }
+
+    private fun firstNonBlankLine(text: String): String {
+        return text.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+    }
+
+    private fun isCompileLikeError(result: CphCaseResult): Boolean {
+        val text = listOf(result.message, result.stderr, result.actualOutput)
+            .joinToString("\n")
+            .lowercase()
+        return COMPILE_ERROR_MARKERS.any { it in text }
+    }
+
+    private val COMPILE_ERROR_MARKERS = listOf(
+        "build failed",
+        "build timed out",
+        "cmake",
+        "c/c++ file configuration",
+    )
+}
+
+class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val stateService = CphStateService.getInstance(project)
     private var currentIdentity = CphTargetResolver.current(project)
     private var currentTargetCases = stateService.getOrCreateTargetCases(currentIdentity)
     private var selectedCase: CphTestCase? = null
     private var running = false
     private var settingsVisible = false
+    private var pendingTargetRefresh = false
 
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
     private val caseTabComponents = linkedMapOf<String, CaseTab>()
 
-    private val targetLabel = JBLabel()
-    private val refreshButton = JButton("↻")
-    private val addButton = JButton("+")
-    private val deleteButton = JButton("⌫")
     private val settingsButton = JButton("⚙")
-    private val defaultSettingsButtonBorder = settingsButton.border
-    private val runSelectedButton = JButton("▷ Run")
-    private val runAllButton = JButton("▷ Run All")
+    private val runAllButton = JButton("▷")
+    private val runSelectedCaseButton = JButton("▷ Run")
     private val ignoreTrailingWhitespace = JCheckBox("忽略行尾空格和多余换行")
-    private val timeoutSpinner = JSpinner(SpinnerNumberModel(1000, 100, 60000, 100))
+    private val timeoutSpinner = JSpinner(
+        SpinnerNumberModel(
+            CPH_DEFAULT_TIMEOUT_MILLIS.toInt(),
+            CPH_MIN_TIMEOUT_MILLIS.toInt(),
+            CPH_MAX_TIMEOUT_MILLIS.toInt(),
+            100,
+        ),
+    )
 
     private val tabStrip = JPanel()
     private val tabScrollPane = JBScrollPane(tabStrip)
@@ -66,8 +145,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
     private val actualArea = JBTextArea()
-    private val stderrArea = JBTextArea()
-    private val resultLabel = JBLabel("No case selected")
 
     init {
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
@@ -75,17 +152,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         add(buildTop(), BorderLayout.NORTH)
         add(buildCenter(), BorderLayout.CENTER)
 
-        refreshButton.toolTipText = "Refresh target"
-        addButton.toolTipText = "Add case"
-        deleteButton.toolTipText = "Delete selected case"
+        runAllButton.toolTipText = "Run all enabled cases"
+        runSelectedCaseButton.toolTipText = "Run this case"
         settingsButton.toolTipText = "Settings"
+        configureRunAllButton()
+        configureRunSelectedCaseButton()
+        configureSettingsButton()
 
-        refreshButton.addActionListener { refreshTarget() }
-        addButton.addActionListener { addCase() }
-        deleteButton.addActionListener { deleteSelectedCase() }
         settingsButton.addActionListener { toggleSettingsPanel() }
-        runSelectedButton.addActionListener { runSelectedCase() }
         runAllButton.addActionListener { runAllCases() }
+        runSelectedCaseButton.addActionListener { runSelectedCase() }
         ignoreTrailingWhitespace.addActionListener {
             currentTargetCases.ignoreTrailingWhitespace = ignoreTrailingWhitespace.isSelected
             refreshActualDiffHighlights()
@@ -95,26 +171,60 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
 
         actualArea.isEditable = false
-        stderrArea.isEditable = false
-        listOf(inputArea, expectedArea, actualArea, stderrArea).forEach(::configureEditor)
+        listOf(inputArea, expectedArea, actualArea).forEach(::configureEditor)
         listOf(expectedArea, actualArea).forEach(::installDiffRefreshListener)
 
+        installTargetRefreshListeners()
         refreshTarget()
     }
+
+    override fun dispose() = Unit
 
     private fun buildTop(): JComponent {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         toolbar.background = PANEL
-        toolbar.add(JBLabel("Target:"))
-        toolbar.add(targetLabel)
-        toolbar.add(refreshButton)
-        toolbar.add(JSeparatorPanel())
         toolbar.add(runAllButton)
-        toolbar.add(runSelectedButton)
-        toolbar.add(addButton)
-        toolbar.add(deleteButton)
         toolbar.add(settingsButton)
         return toolbar
+    }
+
+    private fun configureRunAllButton() {
+        runAllButton.foreground = GOOD
+        runAllButton.background = PANEL
+        runAllButton.isOpaque = false
+        runAllButton.isContentAreaFilled = false
+        runAllButton.isBorderPainted = false
+        runAllButton.isFocusPainted = false
+        runAllButton.border = EmptyBorder(2, 6, 2, 6)
+        runAllButton.preferredSize = Dimension(34, 28)
+        runAllButton.minimumSize = runAllButton.preferredSize
+        runAllButton.maximumSize = runAllButton.preferredSize
+        runAllButton.font = runAllButton.font.deriveFont(Font.BOLD, runAllButton.font.size2D + 2.0f)
+    }
+
+    private fun configureRunSelectedCaseButton() {
+        runSelectedCaseButton.foreground = GOOD
+        runSelectedCaseButton.background = PANEL
+        runSelectedCaseButton.isOpaque = false
+        runSelectedCaseButton.isContentAreaFilled = false
+        runSelectedCaseButton.isBorderPainted = false
+        runSelectedCaseButton.isFocusPainted = false
+        runSelectedCaseButton.border = EmptyBorder(0, 8, 0, 0)
+        runSelectedCaseButton.font = runSelectedCaseButton.font.deriveFont(Font.BOLD)
+    }
+
+    private fun configureSettingsButton() {
+        settingsButton.foreground = TEXT
+        settingsButton.background = PANEL
+        settingsButton.isOpaque = false
+        settingsButton.isContentAreaFilled = false
+        settingsButton.isBorderPainted = false
+        settingsButton.isFocusPainted = false
+        settingsButton.border = EmptyBorder(2, 6, 2, 6)
+        settingsButton.preferredSize = Dimension(34, 28)
+        settingsButton.minimumSize = settingsButton.preferredSize
+        settingsButton.maximumSize = settingsButton.preferredSize
+        settingsButton.font = settingsButton.font.deriveFont(Font.BOLD, settingsButton.font.size2D + 1.0f)
     }
 
     private fun buildCenter(): JComponent {
@@ -177,11 +287,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
             if (settingsVisible) SETTINGS_VIEW_CARD else MAIN_VIEW_CARD,
         )
         settingsButton.toolTipText = if (settingsVisible) "Hide settings" else "Settings"
-        settingsButton.border = if (settingsVisible) {
-            CompoundBorder(MatteBorder(1, 1, 1, 1, RUN), EmptyBorder(0, 0, 0, 0))
-        } else {
-            defaultSettingsButtonBorder
-        }
+        settingsButton.foreground = if (settingsVisible) RUN else TEXT
         contentCards.revalidate()
         contentCards.repaint()
     }
@@ -200,15 +306,31 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     private fun buildBody(): JComponent {
+        val uiState = stateService.getState().ui
         val editorPanel = JPanel()
         editorPanel.layout = BoxLayout(editorPanel, BoxLayout.Y_AXIS)
         editorPanel.background = PANEL
         editorPanel.border = EmptyBorder(0, 0, 0, 0)
-        editorPanel.add(labeled("Input", scroll(inputArea, 150), 150))
-        editorPanel.add(labeled("Expected output", scroll(expectedArea, 135), 135))
-        editorPanel.add(labeled("Actual output", scroll(actualArea, 135), 135))
-        editorPanel.add(labeled("stderr", scroll(stderrArea, 115), 115))
-        editorPanel.add(buildResultPanel())
+        editorPanel.add(
+            resizableLabeled(
+                "Input",
+                scroll(inputArea, uiState.inputHeight),
+                uiState.inputHeight,
+                runSelectedCaseButton,
+            ) {
+                stateService.getState().ui.inputHeight = it
+            },
+        )
+        editorPanel.add(
+            resizableLabeled("Expected output", scroll(expectedArea, uiState.expectedHeight), uiState.expectedHeight) {
+                stateService.getState().ui.expectedHeight = it
+            },
+        )
+        editorPanel.add(
+            resizableLabeled("Actual output", scroll(actualArea, uiState.actualHeight), uiState.actualHeight) {
+                stateService.getState().ui.actualHeight = it
+            },
+        )
         editorPanel.add(Box.createVerticalGlue())
 
         return JBScrollPane(editorPanel).also {
@@ -218,30 +340,114 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
     }
 
-    private fun buildResultPanel(): JComponent {
-        resultLabel.isOpaque = true
-        resultLabel.background = SURFACE
-        resultLabel.border = CompoundBorder(MatteBorder(1, 1, 1, 1, BORDER), EmptyBorder(10, 12, 10, 12))
-        resultLabel.maximumSize = Dimension(Int.MAX_VALUE, 48)
-        return resultLabel
-    }
-
-    private fun labeled(label: String, component: JComponent, height: Int): JComponent {
-        val panel = JPanel(BorderLayout(0, 6))
-        panel.background = PANEL
-        panel.border = EmptyBorder(8, 0, 8, 0)
-        panel.add(JBLabel(label), BorderLayout.NORTH)
-        panel.add(component, BorderLayout.CENTER)
-        return fullWidth(panel, height + 34)
+    private fun resizableLabeled(
+        label: String,
+        component: JComponent,
+        height: Int,
+        titleAction: JComponent? = null,
+        onHeightChanged: (Int) -> Unit,
+    ): JComponent {
+        return ResizableEditorSection(label, component, height, titleAction, onHeightChanged)
     }
 
     private fun scroll(area: JBTextArea, height: Int): JComponent {
         return JBScrollPane(area).also {
             it.preferredSize = Dimension(320, height)
-            it.minimumSize = Dimension(100, height)
+            it.minimumSize = Dimension(100, CPH_MIN_EDITOR_HEIGHT)
             it.border = MatteBorder(1, 1, 1, 1, BORDER)
             it.viewport.background = EDITOR
             it.setRowHeaderView(LineNumberGutter(area))
+        }
+    }
+
+    private inner class ResizableEditorSection(
+        label: String,
+        private val component: JComponent,
+        initialHeight: Int,
+        titleAction: JComponent?,
+        private val onHeightChanged: (Int) -> Unit,
+    ) : JPanel(BorderLayout(0, 6)) {
+        private val title = JBLabel(label)
+        private val titleRow = JPanel(BorderLayout())
+        private val dragHandle = ResizeHandle()
+        private var editorHeight = CphStateService.clampEditorHeight(initialHeight)
+        private var dragStartY = 0
+        private var dragStartHeight = editorHeight
+
+        init {
+            background = PANEL
+            border = EmptyBorder(8, 0, 8, 0)
+            alignmentX = Component.LEFT_ALIGNMENT
+
+            titleRow.background = PANEL
+            titleRow.add(title, BorderLayout.WEST)
+            titleAction?.let { titleRow.add(it, BorderLayout.EAST) }
+
+            val editorContainer = JPanel(BorderLayout())
+            editorContainer.background = PANEL
+            editorContainer.add(component, BorderLayout.CENTER)
+            editorContainer.add(dragHandle, BorderLayout.SOUTH)
+
+            add(titleRow, BorderLayout.NORTH)
+            add(editorContainer, BorderLayout.CENTER)
+
+            dragHandle.toolTipText = "Drag to resize"
+            dragHandle.cursor = Cursor.getPredefinedCursor(Cursor.S_RESIZE_CURSOR)
+            dragHandle.addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) {
+                    dragStartY = e.yOnScreen
+                    dragStartHeight = editorHeight
+                }
+            })
+            dragHandle.addMouseMotionListener(object : MouseAdapter() {
+                override fun mouseDragged(e: MouseEvent) {
+                    setEditorHeight(dragStartHeight + e.yOnScreen - dragStartY, persist = true)
+                }
+            })
+
+            setEditorHeight(editorHeight, persist = false)
+        }
+
+        private fun setEditorHeight(height: Int, persist: Boolean) {
+            editorHeight = CphStateService.clampEditorHeight(height)
+            component.preferredSize = Dimension(320, editorHeight)
+            component.minimumSize = Dimension(100, CPH_MIN_EDITOR_HEIGHT)
+            component.maximumSize = Dimension(Int.MAX_VALUE, editorHeight)
+
+            val insets = insets
+            val totalHeight = editorHeight +
+                titleRow.preferredSize.height +
+                RESIZE_HANDLE_HEIGHT +
+                insets.top +
+                insets.bottom +
+                6
+            preferredSize = Dimension(320, totalHeight)
+            minimumSize = Dimension(
+                100,
+                CPH_MIN_EDITOR_HEIGHT +
+                    titleRow.preferredSize.height +
+                    RESIZE_HANDLE_HEIGHT +
+                    insets.top +
+                    insets.bottom +
+                    6,
+            )
+            maximumSize = Dimension(Int.MAX_VALUE, totalHeight)
+
+            if (persist) {
+                onHeightChanged(editorHeight)
+            }
+            revalidate()
+            parent?.revalidate()
+            repaint()
+        }
+    }
+
+    private class ResizeHandle : JPanel() {
+        init {
+            isOpaque = false
+            preferredSize = Dimension(0, RESIZE_HANDLE_HEIGHT)
+            minimumSize = preferredSize
+            maximumSize = Dimension(Int.MAX_VALUE, RESIZE_HANDLE_HEIGHT)
         }
     }
 
@@ -273,9 +479,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         runtimeStates.clear()
         selectedCase = null
 
-        targetLabel.text = currentIdentity.displayName
-        targetLabel.border = CompoundBorder(MatteBorder(1, 1, 1, 1, BORDER), EmptyBorder(5, 12, 5, 12))
-        targetLabel.toolTipText = currentIdentity.message
         timeoutSpinner.value = currentTargetCases.timeoutMillis.toInt()
         ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
 
@@ -284,7 +487,50 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         updateActions()
     }
 
+    private fun installTargetRefreshListeners() {
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(RunManagerListener.TOPIC, object : RunManagerListener {
+            override fun runConfigurationSelected(settings: RunnerAndConfigurationSettings?) {
+                scheduleTargetRefresh()
+            }
+
+            override fun runConfigurationSelected() {
+                scheduleTargetRefresh()
+            }
+
+            override fun runConfigurationChanged(settings: RunnerAndConfigurationSettings) {
+                if (settings === RunManager.getInstance(project).selectedConfiguration) {
+                    scheduleTargetRefresh()
+                }
+            }
+        })
+        connection.subscribe(ExecutionTargetManager.TOPIC, object : ExecutionTargetListener {
+            override fun activeTargetChanged(target: ExecutionTarget) {
+                scheduleTargetRefresh()
+            }
+        })
+    }
+
+    private fun scheduleTargetRefresh() {
+        if (running) {
+            pendingTargetRefresh = true
+            return
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            refreshTarget()
+        } else {
+            ApplicationManager.getApplication().invokeLater {
+                if (running) {
+                    pendingTargetRefresh = true
+                } else {
+                    refreshTarget()
+                }
+            }
+        }
+    }
+
     private fun addCase() {
+        if (running) return
         flushSelectedCase()
         val index = currentTargetCases.cases.size + 1
         val testCase = CphTestCase(name = "Case $index")
@@ -294,15 +540,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         updateActions()
     }
 
-    private fun deleteSelectedCase() {
-        val testCase = selectedCase ?: return
+    private fun deleteCase(testCase: CphTestCase) {
+        if (running) return
         val index = currentTargetCases.cases.indexOfFirst { it.id == testCase.id }
+        val deletingSelected = selectedCase?.id == testCase.id
         currentTargetCases.cases.remove(testCase)
         runtimeStates.remove(testCase.id)
-        selectedCase = null
-        refreshTabs()
-        selectCase(currentTargetCases.cases.getOrNull(index.coerceAtMost(currentTargetCases.cases.lastIndex)))
-        updateActions()
+        if (deletingSelected) {
+            selectedCase = null
+            refreshTabs()
+            selectCase(currentTargetCases.cases.getOrNull(index.coerceAtMost(currentTargetCases.cases.lastIndex)))
+        } else {
+            refreshTabs()
+            updateActions()
+        }
     }
 
     private fun runSelectedCase() {
@@ -329,6 +580,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         object : Task.Backgroundable(project, "Running CPH samples", true) {
             override fun run(indicator: ProgressIndicator) {
                 val runner = CphRunner(project)
+                val saveError = saveAllDocumentsBeforeRun()
+                if (saveError != null) {
+                    val result = CphCaseResult(
+                        verdict = CphVerdict.ERROR,
+                        message = "Save failed before running CPH samples: ${saveError.message ?: saveError.javaClass.simpleName}",
+                    )
+                    cases.forEach { it.lastResult = result.copy() }
+                    cases.forEach { reportCaseError(it, it.lastResult) }
+                    return
+                }
                 for ((index, testCase) in cases.withIndex()) {
                     if (indicator.isCanceled) break
                     ApplicationManager.getApplication().invokeLater {
@@ -341,6 +602,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
                     val result = runner.runCase(identity, testCase, timeoutMillis, ignoreTrailing)
                     testCase.lastResult = result
                     ApplicationManager.getApplication().invokeLater {
+                        reportCaseError(testCase, result)
                         runtimeStates.remove(testCase.id)
                         refreshTabs()
                         if (selectedCase?.id == testCase.id) {
@@ -353,12 +615,43 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
             override fun onFinished() {
                 ApplicationManager.getApplication().invokeLater {
                     runtimeStates.clear()
-                    refreshTabs()
-                    renderSelectedCase()
                     setRunning(false)
+                    if (pendingTargetRefresh) {
+                        pendingTargetRefresh = false
+                        refreshTarget()
+                    } else {
+                        refreshTabs()
+                        renderSelectedCase()
+                    }
                 }
             }
         }.queue()
+    }
+
+    private fun reportCaseError(testCase: CphTestCase, result: CphCaseResult) {
+        if (result.verdict != CphVerdict.ERROR) return
+        if (!SwingUtilities.isEventDispatchThread()) {
+            ApplicationManager.getApplication().invokeLater { reportCaseError(testCase, result) }
+            return
+        }
+        val statusMessage = CphUiText.errorStatusMessage(testCase.name, result)
+        StatusBar.Info.set(statusMessage, project)
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+            .createNotification("CPH sample failed", CphUiText.errorNotificationContent(testCase.name, result), NotificationType.ERROR)
+            .notify(project)
+    }
+
+    private fun saveAllDocumentsBeforeRun(): Throwable? {
+        return runCatching {
+            if (SwingUtilities.isEventDispatchThread()) {
+                FileDocumentManager.getInstance().saveAllDocuments()
+            } else {
+                ApplicationManager.getApplication().invokeAndWait {
+                    FileDocumentManager.getInstance().saveAllDocuments()
+                }
+            }
+        }.exceptionOrNull()
     }
 
     private fun setRunning(value: Boolean) {
@@ -397,24 +690,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         inputArea.isEnabled = enabled
         expectedArea.isEnabled = enabled
         actualArea.isEnabled = enabled
-        stderrArea.isEnabled = enabled
 
         if (testCase == null) {
             inputArea.text = ""
             expectedArea.text = ""
             actualArea.text = ""
-            stderrArea.text = ""
-            resultLabel.text = "No case selected"
-            resultLabel.foreground = MUTED
         } else {
             inputArea.text = testCase.input
             expectedArea.text = testCase.expectedOutput
             actualArea.text = testCase.lastResult.actualOutput
-            stderrArea.text = testCase.lastResult.stderr
-            val status = statusFor(testCase)
-            val style = styleFor(status)
-            resultLabel.text = renderResult(testCase, status)
-            resultLabel.foreground = style.foreground
         }
         refreshActualDiffHighlights()
         updateActions()
@@ -453,6 +737,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
             caseTabComponents[testCase.id] = tab
             tabStrip.add(tab)
         }
+        tabStrip.add(AddCaseTab())
         tabStrip.add(Box.createHorizontalGlue())
         tabStrip.revalidate()
         tabStrip.repaint()
@@ -473,24 +758,18 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
     }
 
-    private fun renderResult(testCase: CphTestCase, status: TabStatus): String {
-        if (status == TabStatus.NOT_RUN) return "Not run"
-        if (status == TabStatus.QUEUED) return "Queued"
-        if (status == TabStatus.RUNNING) return "Running ${testCase.name}"
-        val result = testCase.lastResult
-        val exit = result.exitCode?.let { ", exit $it" }.orEmpty()
-        return "${status.icon} ${result.verdict} in ${result.durationMillis}ms$exit: ${result.message}"
-    }
-
     private fun updateActions() {
-        val hasCase = selectedCase != null
         val runnable = currentIdentity.runnable && !running
-        addButton.isEnabled = !running
-        refreshButton.isEnabled = !running
         settingsButton.isEnabled = !running
-        deleteButton.isEnabled = hasCase && !running
-        runSelectedButton.isEnabled = hasCase && runnable
+        settingsButton.foreground = when {
+            !settingsButton.isEnabled -> MUTED
+            settingsVisible -> RUN
+            else -> TEXT
+        }
+        runSelectedCaseButton.isEnabled = selectedCase != null && runnable
+        runSelectedCaseButton.foreground = if (runSelectedCaseButton.isEnabled) GOOD else MUTED
         runAllButton.isEnabled = currentTargetCases.cases.any { it.enabled } && runnable
+        runAllButton.foreground = if (runAllButton.isEnabled) GOOD else MUTED
         timeoutSpinner.isEnabled = !running
         ignoreTrailingWhitespace.isEnabled = !running
     }
@@ -500,6 +779,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         private val testCase: CphTestCase,
     ) : JPanel(BorderLayout()) {
         private val enabledToggle = JCheckBox()
+        private val deleteCaseButton = JButton("×")
         private val title = JBLabel()
         private val detail = JBLabel()
 
@@ -535,7 +815,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
             enabledToggle.isEnabled = !running
             enabledToggle.isOpaque = false
             enabledToggle.toolTipText = if (testCase.enabled) "Enabled" else "Disabled"
-            enabledToggle.preferredSize = Dimension(22, 22)
+            enabledToggle.horizontalAlignment = SwingConstants.CENTER
+            enabledToggle.preferredSize = Dimension(24, 20)
             enabledToggle.maximumSize = enabledToggle.preferredSize
             enabledToggle.addActionListener {
                 testCase.enabled = enabledToggle.isSelected
@@ -543,6 +824,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
                 refreshTabs()
                 updateActions()
             }
+
+            deleteCaseButton.isEnabled = !running
+            deleteCaseButton.toolTipText = "Delete case"
+            deleteCaseButton.foreground = BAD
+            deleteCaseButton.background = tabBackground
+            deleteCaseButton.isOpaque = false
+            deleteCaseButton.isContentAreaFilled = false
+            deleteCaseButton.isBorderPainted = false
+            deleteCaseButton.isFocusPainted = false
+            deleteCaseButton.horizontalAlignment = SwingConstants.CENTER
+            deleteCaseButton.border = EmptyBorder(0, 0, 0, 0)
+            deleteCaseButton.preferredSize = Dimension(24, 20)
+            deleteCaseButton.maximumSize = deleteCaseButton.preferredSize
+            deleteCaseButton.font = deleteCaseButton.font.deriveFont(Font.BOLD, deleteCaseButton.font.size2D + 1.0f)
+            deleteCaseButton.addActionListener { deleteCase(testCase) }
 
             title.text = tabTitle(index, displayStatus)
             title.foreground = foreground
@@ -562,12 +858,18 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
             textPanel.background = background
             textPanel.add(title)
             textPanel.add(detail)
+            val actionPanel = JPanel(BorderLayout())
+            actionPanel.background = background
+            actionPanel.preferredSize = Dimension(24, 1)
+            actionPanel.add(deleteCaseButton, BorderLayout.NORTH)
+            actionPanel.add(enabledToggle, BorderLayout.SOUTH)
             content.add(textPanel, BorderLayout.CENTER)
-            content.add(enabledToggle, BorderLayout.EAST)
+            content.add(actionPanel, BorderLayout.EAST)
             content.toolTipText = toolTipText
             title.toolTipText = toolTipText
             detail.toolTipText = toolTipText
             textPanel.toolTipText = toolTipText
+            actionPanel.toolTipText = toolTipText
 
             val selectListener = object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent) {
@@ -584,11 +886,39 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
     }
 
-    private class JSeparatorPanel : JPanel() {
+    private inner class AddCaseTab : JPanel(BorderLayout()) {
+        private val button = JButton("+")
+
         init {
-            preferredSize = Dimension(1, 26)
-            maximumSize = preferredSize
-            background = BORDER
+            background = PANEL
+            border = CompoundBorder(
+                MatteBorder(1, 1, 2, 1, BORDER),
+                EmptyBorder(3, 10, 3, 8),
+            )
+            preferredSize = Dimension(140, 60)
+            minimumSize = Dimension(116, 60)
+            maximumSize = Dimension(184, 60)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            toolTipText = "Add case"
+
+            button.isEnabled = !running
+            button.toolTipText = toolTipText
+            button.foreground = TEXT
+            button.background = PANEL
+            button.isOpaque = false
+            button.isContentAreaFilled = false
+            button.isBorderPainted = false
+            button.isFocusPainted = false
+            button.font = button.font.deriveFont(Font.BOLD, button.font.size2D + 2.0f)
+            button.addActionListener { addCase() }
+
+            val listener = object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    addCase()
+                }
+            }
+            addMouseListener(listener)
+            add(button, BorderLayout.CENTER)
         }
     }
 
@@ -705,12 +1035,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         private val DIFF_LINE_PAINTER = LineBackgroundPainter(DIFF_BACKGROUND)
         private const val MAIN_VIEW_CARD = "main"
         private const val SETTINGS_VIEW_CARD = "settings"
-
-        private fun fullWidth(component: JComponent, height: Int): JComponent {
-            component.maximumSize = Dimension(Int.MAX_VALUE, height)
-            component.alignmentX = Component.LEFT_ALIGNMENT
-            return component
-        }
+        private const val RESIZE_HANDLE_HEIGHT = 8
+        private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
 
         private fun tabTitle(index: Int, status: TabStatus): String {
             return if (status == TabStatus.NOT_RUN) {
@@ -758,7 +1084,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
                 TabStatus.WA,
                 TabStatus.TLE,
                 TabStatus.RE -> "${testCase.name}: ${testCase.lastResult.verdict} in ${formatDuration(testCase.lastResult.durationMillis)}"
-                TabStatus.ERROR -> "${testCase.name}: error in ${formatDuration(testCase.lastResult.durationMillis)}"
+                TabStatus.ERROR -> CphUiText.errorTooltip(testCase.name, testCase.lastResult)
                 TabStatus.RUNNING -> "${testCase.name}: running"
                 TabStatus.QUEUED -> "${testCase.name}: queued"
                 TabStatus.NOT_RUN -> "${testCase.name}: not run"
@@ -766,12 +1092,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) 
         }
 
         private fun formatDuration(durationMillis: Long): String {
-            return if (durationMillis >= 1000) {
-                val seconds = durationMillis / 1000.0
-                "%.1fs".format(seconds)
-            } else {
-                "${durationMillis}ms"
-            }
+            return CphUiText.formatDuration(durationMillis)
         }
 
         private fun styleFor(status: TabStatus): TabStyle {

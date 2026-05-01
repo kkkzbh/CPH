@@ -4,11 +4,15 @@ CPH Target Runner is a CLion plugin for competitive programming sample testing.
 
 It adds a dedicated `CPH` tool window that lets you:
 
-- manage multiple sample cases for the current CMake target
+- manage multiple sample cases for the current CMake target or C/C++ file run configuration
 - run the selected case or all enabled cases
 - compare expected and actual output with configurable whitespace handling
 - highlight mismatched lines in actual output
 - set per-target time limits
+
+## Demo
+
+![CPH Target Runner plugin demo](docs/assets/plugin-demo.png)
 
 ## Build
 
@@ -19,7 +23,7 @@ It adds a dedicated `CPH` tool window that lets you:
 The plugin ZIP is generated at:
 
 ```text
-build/distributions/clion-cph-target-runner-1.0.0.zip
+build/distributions/clion-cph-target-runner-1.0.1.zip
 ```
 
 ## Install locally

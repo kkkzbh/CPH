@@ -7,6 +7,15 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import java.util.UUID
 
+internal const val CPH_DEFAULT_TIMEOUT_MILLIS = 1000L
+internal const val CPH_MIN_TIMEOUT_MILLIS = 100L
+internal const val CPH_MAX_TIMEOUT_MILLIS = 60000L
+internal const val CPH_DEFAULT_INPUT_HEIGHT = 150
+internal const val CPH_DEFAULT_EXPECTED_HEIGHT = 135
+internal const val CPH_DEFAULT_ACTUAL_HEIGHT = 135
+internal const val CPH_MIN_EDITOR_HEIGHT = 80
+internal const val CPH_MAX_EDITOR_HEIGHT = 800
+
 enum class CphVerdict {
     NOT_RUN,
     AC,
@@ -37,13 +46,20 @@ data class CphTestCase(
 data class CphTargetCases(
     var targetId: String = "",
     var displayName: String = "",
-    var timeoutMillis: Long = 1000,
+    var timeoutMillis: Long = CPH_DEFAULT_TIMEOUT_MILLIS,
     var ignoreTrailingWhitespace: Boolean = true,
     var cases: MutableList<CphTestCase> = mutableListOf(),
 )
 
+data class CphUiState(
+    var inputHeight: Int = CPH_DEFAULT_INPUT_HEIGHT,
+    var expectedHeight: Int = CPH_DEFAULT_EXPECTED_HEIGHT,
+    var actualHeight: Int = CPH_DEFAULT_ACTUAL_HEIGHT,
+)
+
 data class CphState(
     var targets: MutableMap<String, CphTargetCases> = linkedMapOf(),
+    var ui: CphUiState = CphUiState(),
 )
 
 @State(name = "CphTargetRunnerState", storages = [Storage("cph-target-runner.xml")])
@@ -54,11 +70,11 @@ class CphStateService : PersistentStateComponent<CphState> {
 
     override fun loadState(state: CphState) {
         state.targets.values.forEach {
-            if (it.timeoutMillis == 2000L) {
-                it.timeoutMillis = 1000L
-            }
-            it.ignoreTrailingWhitespace = true
+            it.timeoutMillis = it.timeoutMillis.coerceIn(CPH_MIN_TIMEOUT_MILLIS, CPH_MAX_TIMEOUT_MILLIS)
         }
+        state.ui.inputHeight = clampEditorHeight(state.ui.inputHeight)
+        state.ui.expectedHeight = clampEditorHeight(state.ui.expectedHeight)
+        state.ui.actualHeight = clampEditorHeight(state.ui.actualHeight)
         this.state = state
     }
 
@@ -67,6 +83,7 @@ class CphStateService : PersistentStateComponent<CphState> {
             CphTargetCases(
                 targetId = identity.id,
                 displayName = identity.displayName,
+                cases = mutableListOf(CphTestCase(name = "Case 1")),
             )
         }.also {
             it.targetId = identity.id
@@ -76,5 +93,7 @@ class CphStateService : PersistentStateComponent<CphState> {
 
     companion object {
         fun getInstance(project: Project): CphStateService = project.service()
+
+        fun clampEditorHeight(height: Int): Int = height.coerceIn(CPH_MIN_EDITOR_HEIGHT, CPH_MAX_EDITOR_HEIGHT)
     }
 }
