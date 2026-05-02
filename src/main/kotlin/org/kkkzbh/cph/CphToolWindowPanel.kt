@@ -20,16 +20,21 @@ import com.intellij.openapi.wm.StatusBar
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBTextField
 import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Container
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
-import java.awt.GridLayout
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import java.awt.Insets
+import java.awt.KeyboardFocusManager
 import java.awt.Rectangle
 import java.awt.Shape
 import javax.swing.BorderFactory
@@ -37,22 +42,28 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.JSplitPane
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import javax.swing.border.CompoundBorder
 import javax.swing.border.EmptyBorder
 import javax.swing.border.MatteBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.plaf.basic.BasicSplitPaneDivider
+import javax.swing.plaf.basic.BasicSplitPaneUI
 import javax.swing.text.Highlighter
 import javax.swing.text.JTextComponent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import kotlin.math.roundToInt
 
 internal object CphUiText {
     fun errorTooltip(caseName: String, result: CphCaseResult): String {
@@ -123,7 +134,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var running = false
     private var settingsVisible = false
     private var pendingTargetRefresh = false
+    private var applyingTargetSettings = false
+    private var applyingShortcutSettings = false
 
+    private val compileSettingsSynchronizer = CphCompileSettingsSynchronizer(project)
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
     private val caseTabComponents = linkedMapOf<String, CaseTab>()
 
@@ -133,6 +147,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val runSelectedCaseButton = JButton("▷ Run")
     private val debugSelectedCaseButton = JButton("Debug")
     private val ignoreTrailingWhitespace = JCheckBox("忽略行尾空格和多余换行")
+    private val outputSplitEnabled = JCheckBox("双栏显示 Actual / Expected")
+    private val cppStandardCombo = JComboBox(CphCppStandard.entries.toTypedArray())
+    private val compileOptionsField = JBTextField()
+    private val runAllShortcutField = CphShortcutTextField()
+    private val runSelectedCaseShortcutField = CphShortcutTextField()
+    private val debugSelectedCaseShortcutField = CphShortcutTextField()
+    private val compileOptionsSyncTimer = Timer(COMPILE_OPTIONS_SYNC_DELAY_MILLIS) {
+        syncCompileSettingsForCurrentTarget(reportStatus = true)
+    }.also {
+        it.isRepeats = false
+    }
     private val timeoutSpinner = JSpinner(
         SpinnerNumberModel(
             CPH_DEFAULT_TIMEOUT_MILLIS.toInt(),
@@ -145,7 +170,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val tabStrip = JPanel()
     private val tabScrollPane = JBScrollPane(tabStrip)
     private val contentCards = JPanel(CardLayout())
-    private val settingsGrid = JPanel(GridLayout(0, 2, 12, 12))
+    private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
+    private val outputContainer = JPanel(BorderLayout())
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
     private val actualArea = JBTextArea()
@@ -176,8 +202,34 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             currentTargetCases.ignoreTrailingWhitespace = ignoreTrailingWhitespace.isSelected
             refreshActualDiffHighlights()
         }
+        outputSplitEnabled.addActionListener {
+            stateService.getState().ui.outputSplitEnabled = outputSplitEnabled.isSelected
+            rebuildOutputLayout()
+        }
+        cppStandardCombo.addActionListener {
+            if (!applyingTargetSettings) {
+                stateService.getState().compileSettings.cppStandard = cppStandardCombo.selectedItem as? CphCppStandard
+                    ?: CphCppStandard.FOLLOW_TARGET
+                syncCompileSettingsForCurrentTarget(reportStatus = true)
+            }
+        }
+        compileOptionsField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = persist()
+            override fun removeUpdate(e: DocumentEvent) = persist()
+            override fun changedUpdate(e: DocumentEvent) = persist()
+
+            private fun persist() {
+                if (!applyingTargetSettings) {
+                    stateService.getState().compileSettings.compileOptions = compileOptionsField.text
+                    scheduleCompileSettingsSync()
+                }
+            }
+        })
         timeoutSpinner.addChangeListener {
             currentTargetCases.timeoutMillis = (timeoutSpinner.value as Number).toLong()
+        }
+        listOf(runAllShortcutField, runSelectedCaseShortcutField, debugSelectedCaseShortcutField).forEach {
+            it.onShortcutChanged = { persistShortcutSettings() }
         }
 
         actualArea.isEditable = false
@@ -186,9 +238,18 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
         installTargetRefreshListeners()
         refreshTarget()
+        refreshShortcutSettings()
     }
 
     override fun dispose() = Unit
+
+    internal fun triggerShortcut(action: CphShortcutAction) {
+        when (action) {
+            CphShortcutAction.RUN_ALL -> runAllCases()
+            CphShortcutAction.RUN_SELECTED_CASE -> runSelectedCase()
+            CphShortcutAction.DEBUG_SELECTED_CASE -> debugSelectedCase()
+        }
+    }
 
     private fun buildTop(): JComponent {
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
@@ -292,20 +353,40 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun buildSettingsView(): JComponent {
         ignoreTrailingWhitespace.isOpaque = false
+        outputSplitEnabled.isOpaque = false
+        cppStandardCombo.background = SURFACE
+        compileOptionsField.background = EDITOR
+        compileOptionsField.foreground = TEXT
+        compileOptionsField.caretColor = TEXT
+        compileOptionsField.emptyText.text = "-O2 -Wall"
+        settingsGrid.isFocusable = true
         settingsGrid.background = PANEL
-        settingsGrid.border = EmptyBorder(12, 0, 0, 0)
-        settingsGrid.add(settingTile("Time Limits:") {
-            add(timeoutSpinner)
-            add(JBLabel("ms"))
+        settingsGrid.border = EmptyBorder(10, 0, 0, 0)
+        settingsGrid.removeAll()
+        settingsGrid.add(settingsSection("运行设置") {
+            settingRow("Time Limits:", timeoutControl())
+            settingRow("C++ 标准:", cppStandardCombo)
+            compileOptionsField.preferredSize = Dimension(260, compileOptionsField.preferredSize.height)
+            settingRow("Compile options:", compileOptionsField)
         })
-        settingsGrid.add(settingTile("输出比较") {
-            add(ignoreTrailingWhitespace)
+        settingsGrid.add(Box.createVerticalStrut(8))
+        settingsGrid.add(settingsSection("输出设置") {
+            settingCheckBoxRow(ignoreTrailingWhitespace)
+            settingCheckBoxRow(outputSplitEnabled)
+        })
+        settingsGrid.add(Box.createVerticalStrut(8))
+        settingsGrid.add(settingsSection("快捷键") {
+            settingRow("全局运行快捷键：", runAllShortcutField)
+            settingRow("单CASE运行快捷键：", runSelectedCaseShortcutField)
+            settingRow("单CASE调试快捷键：", debugSelectedCaseShortcutField)
         })
 
         val viewport = JPanel(BorderLayout())
+        viewport.isFocusable = true
         viewport.background = PANEL
         viewport.border = EmptyBorder(0, 0, 0, 0)
         viewport.add(settingsGrid, BorderLayout.NORTH)
+        installSettingsFocusReset(viewport)
 
         return JBScrollPane(viewport).also {
             it.border = MatteBorder(1, 0, 0, 0, BORDER)
@@ -330,51 +411,252 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         contentCards.repaint()
     }
 
-    private fun settingTile(title: String, content: JPanel.() -> Unit): JPanel {
-        val body = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).also {
+    private fun installSettingsFocusReset(component: Component) {
+        if (component is JComponent && shouldClearFocusOnSettingsClick(component)) {
+            component.addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) {
+                    if (SwingUtilities.isLeftMouseButton(e)) {
+                        clearSettingsFocus()
+                    }
+                }
+            })
+        }
+        if (component is Container && !isInteractiveSettingsComponent(component)) {
+            component.components.forEach(::installSettingsFocusReset)
+        }
+    }
+
+    private fun shouldClearFocusOnSettingsClick(component: JComponent): Boolean {
+        return !isInteractiveSettingsComponent(component) && (component is JPanel || component is JBLabel)
+    }
+
+    private fun isInteractiveSettingsComponent(component: Component): Boolean {
+        return component is JTextComponent ||
+            component is JComboBox<*> ||
+            component is JSpinner ||
+            component is JCheckBox ||
+            component is JButton
+    }
+
+    private fun clearSettingsFocus() {
+        if (!settingsGrid.requestFocusInWindow()) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().clearGlobalFocusOwner()
+        }
+    }
+
+    private fun refreshShortcutSettings() {
+        applyingShortcutSettings = true
+        try {
+            val shortcutState = CphShortcutSettings.getInstance().state
+            runAllShortcutField.setStoredShortcut(shortcutState.runAllShortcut, notify = false)
+            runSelectedCaseShortcutField.setStoredShortcut(shortcutState.runSelectedCaseShortcut, notify = false)
+            debugSelectedCaseShortcutField.setStoredShortcut(shortcutState.debugSelectedCaseShortcut, notify = false)
+        } finally {
+            applyingShortcutSettings = false
+        }
+    }
+
+    private fun persistShortcutSettings() {
+        if (applyingShortcutSettings) return
+        val nextState = CphShortcutSettingsState(
+            runAllShortcut = runAllShortcutField.shortcutText,
+            runSelectedCaseShortcut = runSelectedCaseShortcutField.shortcutText,
+            debugSelectedCaseShortcut = debugSelectedCaseShortcutField.shortcutText,
+        )
+        val duplicateMessage = CphShortcutMatcher.duplicateShortcutMessage(nextState)
+        if (duplicateMessage != null) {
+            StatusBar.Info.set("CPH shortcut settings: $duplicateMessage", project)
+            return
+        }
+        CphShortcutSettings.getInstance().update(nextState)
+    }
+
+    private fun settingsSection(title: String, content: JPanel.() -> Unit): JPanel {
+        val body = JPanel(GridBagLayout()).also {
             it.background = SURFACE
             it.content()
         }
-        return JPanel(BorderLayout(0, 10)).also {
+        return JPanel(BorderLayout(0, 8)).also {
             it.background = SURFACE
-            it.border = CompoundBorder(MatteBorder(1, 1, 1, 1, BORDER), EmptyBorder(14, 16, 14, 16))
+            it.border = CompoundBorder(MatteBorder(1, 1, 1, 1, BORDER), EmptyBorder(10, 12, 10, 12))
+            it.alignmentX = Component.LEFT_ALIGNMENT
             it.add(JBLabel(title).also { label -> label.foreground = TEXT }, BorderLayout.NORTH)
             it.add(body, BorderLayout.CENTER)
+            val preferred = it.preferredSize
+            it.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
+        }
+    }
+
+    private fun JPanel.settingRow(label: String, component: JComponent) {
+        val row = nextSettingRow()
+        add(JBLabel(label).also { it.foreground = TEXT }, settingConstraints(row, 0, weightx = 0.0))
+        add(component, settingConstraints(row, 1, weightx = 1.0))
+    }
+
+    private fun JPanel.settingCheckBoxRow(checkBox: JCheckBox) {
+        val row = nextSettingRow()
+        checkBox.isOpaque = false
+        add(checkBox, settingConstraints(row, 0, gridwidth = 2, weightx = 1.0))
+    }
+
+    private fun JPanel.nextSettingRow(): Int {
+        val row = (getClientProperty(SETTINGS_ROW_PROPERTY) as? Int) ?: 0
+        putClientProperty(SETTINGS_ROW_PROPERTY, row + 1)
+        return row
+    }
+
+    private fun settingConstraints(
+        row: Int,
+        column: Int,
+        gridwidth: Int = 1,
+        weightx: Double,
+    ): GridBagConstraints {
+        return GridBagConstraints().apply {
+            gridx = column
+            gridy = row
+            this.gridwidth = gridwidth
+            this.weightx = weightx
+            fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.WEST
+            insets = Insets(3, 0, 3, if (column == 0 && gridwidth == 1) 10 else 0)
+        }
+    }
+
+    private fun timeoutControl(): JComponent {
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
+            it.background = SURFACE
+            it.isOpaque = false
+            it.add(timeoutSpinner)
+            it.add(Box.createHorizontalStrut(8))
+            it.add(JBLabel("ms").also { label -> label.foreground = TEXT })
         }
     }
 
     private fun buildBody(): JComponent {
         val uiState = stateService.getState().ui
-        val editorPanel = JPanel()
-        editorPanel.layout = BoxLayout(editorPanel, BoxLayout.Y_AXIS)
-        editorPanel.background = PANEL
-        editorPanel.border = EmptyBorder(0, 0, 0, 0)
-        editorPanel.add(
-            resizableLabeled(
-                "Input",
-                scroll(inputArea, uiState.inputHeight),
-                uiState.inputHeight,
-                inputActions(),
-            ) {
-                stateService.getState().ui.inputHeight = it
-            },
-        )
-        editorPanel.add(
-            resizableLabeled("Expected output", scroll(expectedArea, uiState.expectedHeight), uiState.expectedHeight) {
-                stateService.getState().ui.expectedHeight = it
-            },
-        )
-        editorPanel.add(
-            resizableLabeled("Actual output", scroll(actualArea, uiState.actualHeight), uiState.actualHeight) {
-                stateService.getState().ui.actualHeight = it
-            },
-        )
-        editorPanel.add(Box.createVerticalGlue())
+        outputContainer.background = PANEL
+        rebuildOutputLayout()
 
-        return JBScrollPane(editorPanel).also {
+        return JPanel(BorderLayout()).also { editorPanel ->
+            editorPanel.background = PANEL
+            editorPanel.border = EmptyBorder(0, 0, 0, 0)
+            editorPanel.add(
+                resizableLabeled(
+                    "Input",
+                    scroll(inputArea, uiState.inputHeight),
+                    uiState.inputHeight,
+                    inputActions(),
+                ) {
+                    stateService.getState().ui.inputHeight = it
+                },
+                BorderLayout.NORTH,
+            )
+            editorPanel.add(outputContainer, BorderLayout.CENTER)
+        }
+    }
+
+    private fun rebuildOutputLayout() {
+        outputContainer.removeAll()
+        val uiState = stateService.getState().ui
+        outputSplitEnabled.isSelected = uiState.outputSplitEnabled
+
+        val outputView = if (uiState.outputSplitEnabled) {
+            horizontalOutputSplit(uiState)
+        } else {
+            verticalOutputSplit()
+        }
+        outputContainer.add(outputView, BorderLayout.CENTER)
+        outputContainer.revalidate()
+        outputContainer.repaint()
+    }
+
+    private fun horizontalOutputSplit(uiState: CphUiState): JSplitPane {
+        return outputSplitPane(
+            orientation = JSplitPane.HORIZONTAL_SPLIT,
+            first = labeledOutput("Actual output", scroll(actualArea, uiState.actualHeight)),
+            second = labeledOutput("Expected output", scroll(expectedArea, uiState.expectedHeight)),
+        ).also { splitPane ->
+            var applyingSavedRatio = true
+            splitPane.resizeWeight = uiState.outputSplitRatio
+            splitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) {
+                if (applyingSavedRatio) return@addPropertyChangeListener
+                persistHorizontalOutputSplitRatio(splitPane)
+            }
+            SwingUtilities.invokeLater {
+                applyHorizontalOutputSplitRatio(splitPane)
+                applyingSavedRatio = false
+            }
+        }
+    }
+
+    private fun verticalOutputSplit(): JSplitPane {
+        val uiState = stateService.getState().ui
+        return outputSplitPane(
+            orientation = JSplitPane.VERTICAL_SPLIT,
+            first = labeledOutput("Expected output", scroll(expectedArea, uiState.expectedHeight)),
+            second = labeledOutput("Actual output", scroll(actualArea, uiState.actualHeight)),
+        ).also { splitPane ->
+            splitPane.resizeWeight = 0.5
+            SwingUtilities.invokeLater { splitPane.setDividerLocation(0.5) }
+        }
+    }
+
+    private fun outputSplitPane(orientation: Int, first: JComponent, second: JComponent): JSplitPane {
+        return JSplitPane(orientation, first, second).also {
+            it.setUI(darkSplitPaneUi())
+            it.background = PANEL
             it.border = null
-            it.viewport.background = PANEL
-            it.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            it.dividerSize = OUTPUT_DIVIDER_SIZE
+            it.isContinuousLayout = true
+            it.isOneTouchExpandable = false
+            it.minimumSize = Dimension(0, 0)
+        }
+    }
+
+    private fun darkSplitPaneUi(): BasicSplitPaneUI {
+        return object : BasicSplitPaneUI() {
+            override fun createDefaultDivider(): BasicSplitPaneDivider {
+                return object : BasicSplitPaneDivider(this) {
+                    init {
+                        background = PANEL
+                        border = null
+                        setOpaque(true)
+                    }
+
+                    override fun paint(g: Graphics) {
+                        g.color = PANEL
+                        g.fillRect(0, 0, width, height)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun applyHorizontalOutputSplitRatio(splitPane: JSplitPane) {
+        val ratio = CphStateService.clampOutputSplitRatio(stateService.getState().ui.outputSplitRatio)
+        val span = splitPane.width - splitPane.dividerSize
+        if (span > 0) {
+            splitPane.dividerLocation = (span * ratio).roundToInt()
+        } else {
+            splitPane.setDividerLocation(ratio)
+        }
+    }
+
+    private fun persistHorizontalOutputSplitRatio(splitPane: JSplitPane) {
+        val span = splitPane.width - splitPane.dividerSize
+        if (span <= 0) return
+        stateService.getState().ui.outputSplitRatio = CphStateService.clampOutputSplitRatio(
+            splitPane.dividerLocation.toDouble() / span.toDouble(),
+        )
+    }
+
+    private fun labeledOutput(label: String, component: JComponent): JComponent {
+        return JPanel(BorderLayout(0, 6)).also {
+            it.background = PANEL
+            it.border = EmptyBorder(8, 0, 8, 0)
+            it.minimumSize = Dimension(0, 0)
+            it.add(JBLabel(label).also { title -> title.foreground = TEXT }, BorderLayout.NORTH)
+            it.add(component, BorderLayout.CENTER)
         }
     }
 
@@ -526,12 +808,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runtimeStates.clear()
         selectedCase = null
 
-        timeoutSpinner.value = currentTargetCases.timeoutMillis.toInt()
-        ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
+        applyingTargetSettings = true
+        try {
+            timeoutSpinner.value = currentTargetCases.timeoutMillis.toInt()
+            ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
+            val compileSettings = stateService.getState().compileSettings
+            cppStandardCombo.selectedItem = compileSettings.cppStandard
+            compileOptionsField.text = compileSettings.compileOptions
+        } finally {
+            applyingTargetSettings = false
+        }
 
         refreshTabs()
         selectCase(currentTargetCases.cases.firstOrNull())
         updateActions()
+        syncCompileSettingsForCurrentTarget(reportStatus = true)
     }
 
     private fun installTargetRefreshListeners() {
@@ -550,6 +841,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         connection.subscribe(ExecutionTargetManager.TOPIC, object : ExecutionTargetListener {
             override fun activeTargetChanged(target: ExecutionTarget) {
                 scheduleTargetRefresh()
+            }
+        })
+        connection.subscribe(CphCasesChangedListener.TOPIC, object : CphCasesChangedListener {
+            override fun targetCasesChanged(targetId: String) {
+                if (targetId == currentIdentity.id) {
+                    scheduleTargetRefresh()
+                }
             }
         })
     }
@@ -644,6 +942,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun runCases(cases: List<CphTestCase>) {
         if (cases.isEmpty() || running) return
         val identity = currentIdentity
+        val targetCases = currentTargetCases
         val timeoutMillis = currentTargetCases.timeoutMillis
         val ignoreTrailing = currentTargetCases.ignoreTrailingWhitespace
         runtimeStates.clear()
@@ -659,6 +958,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     val result = CphCaseResult(
                         verdict = CphVerdict.ERROR,
                         message = "Save failed before running CPH samples: ${saveError.message ?: saveError.javaClass.simpleName}",
+                    )
+                    cases.forEach { it.lastResult = result.copy() }
+                    cases.forEach { reportCaseError(it, it.lastResult) }
+                    return
+                }
+                val syncError = compileSettingsSynchronizer.sync(
+                    identity,
+                    targetCases,
+                    stateService.getState().compileSettings.toCompileSettings(),
+                    waitForCppFileTarget = true,
+                ).error
+                if (syncError != null) {
+                    val result = CphCaseResult(
+                        verdict = CphVerdict.ERROR,
+                        message = "Failed to sync CPH compile settings: $syncError",
                     )
                     cases.forEach { it.lastResult = result.copy() }
                     cases.forEach { reportCaseError(it, it.lastResult) }
@@ -714,6 +1028,23 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
             .createNotification("CPH sample failed", CphUiText.errorNotificationContent(testCase.name, result), NotificationType.ERROR)
             .notify(project)
+    }
+
+    private fun scheduleCompileSettingsSync() {
+        compileOptionsSyncTimer.restart()
+    }
+
+    private fun syncCompileSettingsForCurrentTarget(reportStatus: Boolean) {
+        if (applyingTargetSettings || running) return
+        val result = compileSettingsSynchronizer.sync(
+            currentIdentity,
+            currentTargetCases,
+            stateService.getState().compileSettings.toCompileSettings(),
+        )
+        val error = result.error ?: return
+        if (reportStatus) {
+            StatusBar.Info.set("CPH compile settings sync failed: $error", project)
+        }
     }
 
     private fun reportDebugError(message: String) {
@@ -870,6 +1201,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         resetCasesButton.foreground = if (resetCasesButton.isEnabled) TEXT else MUTED
         timeoutSpinner.isEnabled = !running
         ignoreTrailingWhitespace.isEnabled = !running
+        outputSplitEnabled.isEnabled = !running
+        cppStandardCombo.isEnabled = !running
+        compileOptionsField.isEnabled = !running
     }
 
     private inner class CaseTab(
@@ -925,7 +1259,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
             deleteCaseButton.isEnabled = !running
             deleteCaseButton.toolTipText = "Delete case"
-            deleteCaseButton.foreground = BAD
+            deleteCaseButton.foreground = if (deleteCaseButton.isEnabled) Color.WHITE else MUTED
             deleteCaseButton.background = tabBackground
             deleteCaseButton.isOpaque = false
             deleteCaseButton.isContentAreaFilled = false
@@ -1134,7 +1468,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val MAIN_VIEW_CARD = "main"
         private const val SETTINGS_VIEW_CARD = "settings"
         private const val RESIZE_HANDLE_HEIGHT = 8
+        private const val OUTPUT_DIVIDER_SIZE = 6
+        private const val COMPILE_OPTIONS_SYNC_DELAY_MILLIS = 650
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
+        private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
 
         private fun tabTitle(index: Int, status: TabStatus): String {
             return if (status == TabStatus.NOT_RUN) {

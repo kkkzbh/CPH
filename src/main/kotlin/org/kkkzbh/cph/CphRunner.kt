@@ -366,23 +366,7 @@ class CphRunner(private val project: Project) {
         startedAt: Long,
     ): CphCaseResult? {
         return try {
-            val configuration = settings.configuration
-            val provider = cppFileBuildBeforeRunTaskProvider()
-                ?: throw ExecutionException("Cannot find CLion C/C++ File build task provider.")
-            val task = provider.createTask(configuration)
-                ?: throw ExecutionException("Cannot create CLion C/C++ File build task for '${settings.name}'.")
-
-            val executeTask = provider.javaClass.methods.firstOrNull {
-                it.name == "executeTask" &&
-                    it.parameterCount == 4 &&
-                    it.parameterTypes[0].name == "com.intellij.openapi.actionSystem.DataContext" &&
-                    it.parameterTypes[1].isAssignableFrom(configuration.javaClass) &&
-                    it.parameterTypes[2].isAssignableFrom(environment.javaClass) &&
-                    it.parameterTypes[3].isAssignableFrom(task.javaClass)
-            } ?: throw ExecutionException("Cannot find CLion C/C++ File build executor.")
-
-            val ok = executeTask.invoke(provider, DataContext.EMPTY_CONTEXT, configuration, environment, task) as? Boolean
-                ?: false
+            val ok = executeCppFileBuildTask(settings, environment)
             if (ok) {
                 null
             } else {
@@ -394,12 +378,48 @@ class CphRunner(private val project: Project) {
             }
         } catch (e: Throwable) {
             val cause = invocationCause(e)
+            if (isCppFileTargetMiss(cause)) {
+                val diagnostics = CphCompileSettingsSynchronizer(project).diagnoseCppFileWorkspace(settings)
+                return CphCaseResult(
+                    verdict = CphVerdict.ERROR,
+                    durationMillis = elapsedMillis(startedAt),
+                    message = "Build failed for C/C++ File configuration '${settings.name}' because CLion has no matching single-file build target. $diagnostics",
+                )
+            }
             CphCaseResult(
                 verdict = CphVerdict.ERROR,
                 durationMillis = elapsedMillis(startedAt),
                 message = "Build failed for C/C++ File configuration '${settings.name}': ${cause.message ?: cause.javaClass.simpleName}",
             )
         }
+    }
+
+    private fun executeCppFileBuildTask(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        environment: ExecutionEnvironment,
+    ): Boolean {
+        val configuration = settings.configuration
+        val provider = cppFileBuildBeforeRunTaskProvider()
+            ?: throw ExecutionException("Cannot find CLion C/C++ File build task provider.")
+        val task = provider.createTask(configuration)
+            ?: throw ExecutionException("Cannot create CLion C/C++ File build task for '${settings.name}'.")
+
+        val executeTask = provider.javaClass.methods.firstOrNull {
+            it.name == "executeTask" &&
+                it.parameterCount == 4 &&
+                it.parameterTypes[0].name == "com.intellij.openapi.actionSystem.DataContext" &&
+                it.parameterTypes[1].isAssignableFrom(configuration.javaClass) &&
+                it.parameterTypes[2].isAssignableFrom(environment.javaClass) &&
+                it.parameterTypes[3].isAssignableFrom(task.javaClass)
+        } ?: throw ExecutionException("Cannot find CLion C/C++ File build executor.")
+
+        return executeTask.invoke(provider, DataContext.EMPTY_CONTEXT, configuration, environment, task) as? Boolean
+            ?: false
+    }
+
+    private fun isCppFileTargetMiss(error: Throwable): Boolean {
+        return error is NoSuchElementException &&
+            error.message?.contains("Collection contains no element matching the predicate") == true
     }
 
     private fun cppFileBuildBeforeRunTaskProvider(): BeforeRunTaskProvider<*>? {

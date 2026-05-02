@@ -13,6 +13,7 @@ replay_pid*
 
 .idea/
 *.iml
+.codex/
 
 out/
 *.class

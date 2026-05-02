@@ -32,7 +32,10 @@ object CphTargetResolver {
                 runnable = false,
                 message = "Select a CLion CMake Application run configuration.",
             )
+        return fromSettings(settings)
+    }
 
+    fun fromSettings(settings: RunnerAndConfigurationSettings): CphTargetIdentity {
         val configuration = settings.configuration
         val typeId = settings.type.id
         val typeName = settings.type.displayName

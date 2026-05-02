@@ -9,6 +9,8 @@ It adds a dedicated `CPH` tool window that lets you:
 - compare expected and actual output with configurable whitespace handling
 - highlight mismatched lines in actual output
 - set per-target time limits
+- import problems and samples from Competitive Companion
+- configure compile options and CPH-priority run/debug shortcuts
 
 ## Demo
 
@@ -23,7 +25,7 @@ It adds a dedicated `CPH` tool window that lets you:
 The plugin ZIP is generated at:
 
 ```text
-build/distributions/clion-cph-target-runner-1.0.1.zip
+build/distributions/clion-cph-target-runner-1.0.4.zip
 ```
 
 ## Install locally

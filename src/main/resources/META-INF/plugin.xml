@@ -8,12 +8,11 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Add a CMake target Debug action for the selected sample, reusing the sample input through CLion input redirection.</li>
-          <li>Use CLion's native debugger executor and debugger icon for the sample Debug button.</li>
-          <li>Fix document saving before sample runs and debug launches on newer IntelliJ Platform threading rules.</li>
-          <li>Fix C/C++ File run configurations by using CLion run-file build and launcher APIs.</li>
-          <li>Add per-run-configuration sample storage for CMake and single-file targets.</li>
-          <li>Improve error notifications, target refresh behavior, and case tab status display.</li>
+          <li>Add Competitive Companion import support with configurable source path templates.</li>
+          <li>Add compile option and C++ standard settings for generated single-file runs.</li>
+          <li>Add configurable CPH-priority shortcuts for Run All, selected case Run, and selected case Debug.</li>
+          <li>Compact the CPH tool-window settings panel and improve shortcut capture behavior.</li>
+          <li>Keep existing CMake selected-case Debug behavior and CLion-native error reporting.</li>
         </ul>
     ]]></change-notes>
 
@@ -22,6 +21,15 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="org.kkkzbh.cph.CphStateService" />
+        <projectService serviceImplementation="org.kkkzbh.cph.CphShortcutDispatcher" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.server.CphImportSettings" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.server.CphCompetitiveCompanionServer" />
+        <applicationConfigurable parentId="tools"
+                                 id="org.kkkzbh.cph.settings"
+                                 displayName="CPH 竞赛伴侣"
+                                 instance="org.kkkzbh.cph.server.CphImportSettingsConfigurable" />
+        <postStartupActivity implementation="org.kkkzbh.cph.server.CphCompetitiveCompanionStarter" />
         <notificationGroup id="CPH Target Runner" displayType="BALLOON" />
         <toolWindow id="CPH"
                     anchor="right"

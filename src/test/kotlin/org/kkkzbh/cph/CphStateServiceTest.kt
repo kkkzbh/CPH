@@ -56,7 +56,7 @@ class CphStateServiceTest {
     }
 
     @Test
-    fun loadStatePreservesTargetSettings() {
+    fun loadStatePreservesTargetSettingsAndMigratesLegacyCompileSettings() {
         val service = CphStateService()
         service.loadState(
             CphState(
@@ -64,14 +64,51 @@ class CphStateServiceTest {
                     "target" to CphTargetCases(
                         timeoutMillis = 2500,
                         ignoreTrailingWhitespace = false,
+                        cppStandard = CphCppStandard.CPP20,
+                        compileOptions = "-O2 -Wall",
+                        syncedCompilerOptionsBase = "-O0",
+                        syncedCompilerOptionsApplied = "-O0 -O2 -Wall -std=c++20",
                     ),
                 ),
             ),
         )
 
         val targetCases = service.getState().targets.getValue("target")
+        val compileSettings = service.getState().compileSettings
         assertEquals(2500, targetCases.timeoutMillis)
         assertFalse(targetCases.ignoreTrailingWhitespace)
+        assertEquals(CphCppStandard.CPP20, compileSettings.cppStandard)
+        assertEquals("-O2 -Wall", compileSettings.compileOptions)
+        assertEquals(null, targetCases.cppStandard)
+        assertEquals(null, targetCases.compileOptions)
+        assertEquals("-O0", targetCases.syncedCompilerOptionsBase)
+        assertEquals("-O0 -O2 -Wall -std=c++20", targetCases.syncedCompilerOptionsApplied)
+    }
+
+    @Test
+    fun loadStatePreservesGlobalCompileSettingsOverLegacyTargetSettings() {
+        val service = CphStateService()
+        service.loadState(
+            CphState(
+                compileSettings = CphGlobalCompileSettings(
+                    cppStandard = CphCppStandard.CPP23,
+                    compileOptions = "-O3",
+                ),
+                targets = linkedMapOf(
+                    "target" to CphTargetCases(
+                        cppStandard = CphCppStandard.CPP20,
+                        compileOptions = "-O2 -Wall",
+                    ),
+                ),
+            ),
+        )
+
+        val compileSettings = service.getState().compileSettings
+        val targetCases = service.getState().targets.getValue("target")
+        assertEquals(CphCppStandard.CPP23, compileSettings.cppStandard)
+        assertEquals("-O3", compileSettings.compileOptions)
+        assertEquals(null, targetCases.cppStandard)
+        assertEquals(null, targetCases.compileOptions)
     }
 
     @Test
@@ -107,6 +144,46 @@ class CphStateServiceTest {
         assertEquals(220, ui.inputHeight)
         assertEquals(240, ui.expectedHeight)
         assertEquals(260, ui.actualHeight)
+    }
+
+    @Test
+    fun loadStateDefaultsOutputSplitUiState() {
+        val service = CphStateService()
+        service.loadState(CphState())
+
+        val ui = service.getState().ui
+        assertTrue(ui.outputSplitEnabled)
+        assertEquals(0.5, ui.outputSplitRatio, 0.0)
+    }
+
+    @Test
+    fun loadStatePreservesOutputSplitRatio() {
+        val service = CphStateService()
+        service.loadState(
+            CphState(
+                ui = CphUiState(
+                    outputSplitEnabled = false,
+                    outputSplitRatio = 0.25,
+                ),
+            ),
+        )
+
+        val ui = service.getState().ui
+        assertFalse(ui.outputSplitEnabled)
+        assertEquals(0.25, ui.outputSplitRatio, 0.0)
+    }
+
+    @Test
+    fun loadStateClampsInvalidOutputSplitRatios() {
+        val low = CphStateService().also {
+            it.loadState(CphState(ui = CphUiState(outputSplitRatio = -0.5)))
+        }
+        val high = CphStateService().also {
+            it.loadState(CphState(ui = CphUiState(outputSplitRatio = 1.5)))
+        }
+
+        assertEquals(0.0, low.getState().ui.outputSplitRatio, 0.0)
+        assertEquals(1.0, high.getState().ui.outputSplitRatio, 0.0)
     }
 
     @Test
