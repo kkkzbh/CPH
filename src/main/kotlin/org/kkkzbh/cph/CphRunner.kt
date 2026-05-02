@@ -5,7 +5,10 @@ import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.Executor
 import com.intellij.execution.BeforeRunTaskProvider
+import com.intellij.execution.InputRedirectAware
+import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
@@ -17,6 +20,7 @@ import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 
 class CphRunner(private val project: Project) {
@@ -40,6 +44,38 @@ class CphRunner(private val project: Project) {
             CphTargetKind.CPP_FILE -> runCppFileConfiguration(settings, testCase, timeoutMillis, ignoreTrailingWhitespace)
             CphTargetKind.UNSUPPORTED -> CphCaseResult(CphVerdict.ERROR, message = identity.message)
         }
+    }
+
+    fun debugCMakeCase(identity: CphTargetIdentity, testCase: CphTestCase) {
+        val settings = identity.settings
+            ?: throw ExecutionException(identity.message)
+        if (!identity.runnable) {
+            throw ExecutionException(identity.message)
+        }
+        if (identity.kind != CphTargetKind.CMAKE_APP) {
+            throw ExecutionException("CPH Debug supports CLion CMake Application configurations.")
+        }
+
+        val debugSettings = settings.createFactory().create()
+        debugSettings.name = "CPH Debug: ${settings.name} / ${testCase.name}"
+        debugSettings.setTemporary(true)
+
+        val inputFile = Files.createTempFile("cph-debug-", ".in").toFile()
+        inputFile.writeText(testCase.input, StandardCharsets.UTF_8)
+        inputFile.deleteOnExit()
+
+        val inputOptions = InputRedirectAware.getInputRedirectOptions(debugSettings.configuration)
+            ?: debugSettings.configuration as? InputRedirectAware.InputRedirectOptions
+            ?: throw ExecutionException("Cannot configure input redirection for '${settings.name}'.")
+        inputOptions.setRedirectInput(true)
+        inputOptions.setRedirectInputPath(inputFile.absolutePath)
+
+        val configuration = debugSettings.configuration
+        val executor = DefaultDebugExecutor.getDebugExecutorInstance()
+        val runner = ProgramRunner.getRunner(executor.id, configuration)
+            ?: throw ExecutionException("No debugger runner is available for ${settings.name}.")
+        val environment = buildEnvironment(debugSettings, runner, executor)
+        ProgramRunnerUtil.executeConfiguration(environment, false, true)
     }
 
     private fun runCppFileConfiguration(

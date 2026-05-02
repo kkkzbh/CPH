@@ -1,5 +1,6 @@
 package org.kkkzbh.cph
 
+import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.execution.ExecutionTarget
@@ -10,6 +11,7 @@ import com.intellij.execution.RunManagerListener
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
@@ -127,7 +129,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private val settingsButton = JButton("⚙")
     private val runAllButton = JButton("▷")
+    private val resetCasesButton = JButton("↺")
     private val runSelectedCaseButton = JButton("▷ Run")
+    private val debugSelectedCaseButton = JButton("Debug")
     private val ignoreTrailingWhitespace = JCheckBox("忽略行尾空格和多余换行")
     private val timeoutSpinner = JSpinner(
         SpinnerNumberModel(
@@ -153,15 +157,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         add(buildCenter(), BorderLayout.CENTER)
 
         runAllButton.toolTipText = "Run all enabled cases"
+        resetCasesButton.toolTipText = "Delete all cases and create Case 1"
         runSelectedCaseButton.toolTipText = "Run this case"
+        debugSelectedCaseButton.toolTipText = "Debug this case with the selected CMake target"
         settingsButton.toolTipText = "Settings"
         configureRunAllButton()
+        configureResetCasesButton()
         configureRunSelectedCaseButton()
+        configureDebugSelectedCaseButton()
         configureSettingsButton()
 
         settingsButton.addActionListener { toggleSettingsPanel() }
         runAllButton.addActionListener { runAllCases() }
+        resetCasesButton.addActionListener { resetCases() }
         runSelectedCaseButton.addActionListener { runSelectedCase() }
+        debugSelectedCaseButton.addActionListener { debugSelectedCase() }
         ignoreTrailingWhitespace.addActionListener {
             currentTargetCases.ignoreTrailingWhitespace = ignoreTrailingWhitespace.isSelected
             refreshActualDiffHighlights()
@@ -184,6 +194,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         toolbar.background = PANEL
         toolbar.add(runAllButton)
+        toolbar.add(resetCasesButton)
         toolbar.add(settingsButton)
         return toolbar
     }
@@ -202,6 +213,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runAllButton.font = runAllButton.font.deriveFont(Font.BOLD, runAllButton.font.size2D + 2.0f)
     }
 
+    private fun configureResetCasesButton() {
+        resetCasesButton.foreground = TEXT
+        resetCasesButton.background = PANEL
+        resetCasesButton.isOpaque = false
+        resetCasesButton.isContentAreaFilled = false
+        resetCasesButton.isBorderPainted = false
+        resetCasesButton.isFocusPainted = false
+        resetCasesButton.border = EmptyBorder(2, 6, 2, 6)
+        resetCasesButton.preferredSize = Dimension(34, 28)
+        resetCasesButton.minimumSize = resetCasesButton.preferredSize
+        resetCasesButton.maximumSize = resetCasesButton.preferredSize
+        resetCasesButton.font = resetCasesButton.font.deriveFont(Font.BOLD, resetCasesButton.font.size2D + 2.0f)
+    }
+
     private fun configureRunSelectedCaseButton() {
         runSelectedCaseButton.foreground = GOOD
         runSelectedCaseButton.background = PANEL
@@ -211,6 +236,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runSelectedCaseButton.isFocusPainted = false
         runSelectedCaseButton.border = EmptyBorder(0, 8, 0, 0)
         runSelectedCaseButton.font = runSelectedCaseButton.font.deriveFont(Font.BOLD)
+    }
+
+    private fun configureDebugSelectedCaseButton() {
+        debugSelectedCaseButton.icon = AllIcons.Actions.StartDebugger
+        debugSelectedCaseButton.iconTextGap = 4
+        debugSelectedCaseButton.foreground = RUN
+        debugSelectedCaseButton.background = PANEL
+        debugSelectedCaseButton.isOpaque = false
+        debugSelectedCaseButton.isContentAreaFilled = false
+        debugSelectedCaseButton.isBorderPainted = false
+        debugSelectedCaseButton.isFocusPainted = false
+        debugSelectedCaseButton.border = EmptyBorder(0, 8, 0, 0)
+        debugSelectedCaseButton.font = debugSelectedCaseButton.font.deriveFont(Font.BOLD)
     }
 
     private fun configureSettingsButton() {
@@ -316,7 +354,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 "Input",
                 scroll(inputArea, uiState.inputHeight),
                 uiState.inputHeight,
-                runSelectedCaseButton,
+                inputActions(),
             ) {
                 stateService.getState().ui.inputHeight = it
             },
@@ -348,6 +386,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         onHeightChanged: (Int) -> Unit,
     ): JComponent {
         return ResizableEditorSection(label, component, height, titleAction, onHeightChanged)
+    }
+
+    private fun inputActions(): JComponent {
+        return JPanel(FlowLayout(FlowLayout.RIGHT, 10, 0)).also {
+            it.background = PANEL
+            it.isOpaque = false
+            it.add(debugSelectedCaseButton)
+            it.add(runSelectedCaseButton)
+        }
     }
 
     private fun scroll(area: JBTextArea, height: Int): JComponent {
@@ -536,6 +583,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         updateActions()
     }
 
+    private fun resetCases() {
+        if (running) return
+        flushSelectedCase()
+        currentTargetCases.cases.clear()
+        runtimeStates.clear()
+        val testCase = CphTestCase(name = "Case 1")
+        currentTargetCases.cases.add(testCase)
+        selectedCase = null
+        refreshTabs()
+        selectCase(testCase)
+        updateActions()
+    }
+
     private fun deleteCase(testCase: CphTestCase) {
         if (running) return
         val index = currentTargetCases.cases.indexOfFirst { it.id == testCase.id }
@@ -556,6 +616,24 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         flushSelectedCase()
         val testCase = selectedCase ?: return
         runCases(listOf(testCase))
+    }
+
+    private fun debugSelectedCase() {
+        if (running) return
+        flushSelectedCase()
+        val identity = currentIdentity
+        val testCase = selectedCase ?: return
+        val saveError = saveAllDocumentsBeforeRun()
+        if (saveError != null) {
+            reportDebugError("Save failed before debugging CPH sample: ${saveError.message ?: saveError.javaClass.simpleName}")
+            return
+        }
+
+        try {
+            CphRunner(project).debugCMakeCase(identity, testCase)
+        } catch (e: Throwable) {
+            reportDebugError(e.message ?: e.javaClass.simpleName)
+        }
     }
 
     private fun runAllCases() {
@@ -638,13 +716,31 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             .notify(project)
     }
 
+    private fun reportDebugError(message: String) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            ApplicationManager.getApplication().invokeLater { reportDebugError(message) }
+            return
+        }
+        val statusMessage = "CPH Debug: $message"
+        StatusBar.Info.set(statusMessage, project)
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+            .createNotification("CPH debug failed", statusMessage, NotificationType.ERROR)
+            .notify(project)
+    }
+
     private fun saveAllDocumentsBeforeRun(): Throwable? {
         return runCatching {
+            val saveDocuments = Runnable {
+                WriteIntentReadAction.run {
+                    FileDocumentManager.getInstance().saveAllDocuments()
+                }
+            }
             if (SwingUtilities.isEventDispatchThread()) {
-                FileDocumentManager.getInstance().saveAllDocuments()
+                saveDocuments.run()
             } else {
                 ApplicationManager.getApplication().invokeAndWait {
-                    FileDocumentManager.getInstance().saveAllDocuments()
+                    saveDocuments.run()
                 }
             }
         }.exceptionOrNull()
@@ -764,8 +860,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
         runSelectedCaseButton.isEnabled = selectedCase != null && runnable
         runSelectedCaseButton.foreground = if (runSelectedCaseButton.isEnabled) GOOD else MUTED
+        debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
+            currentIdentity.runnable &&
+            currentIdentity.kind == CphTargetKind.CMAKE_APP
+        debugSelectedCaseButton.foreground = if (debugSelectedCaseButton.isEnabled) RUN else MUTED
         runAllButton.isEnabled = currentTargetCases.cases.any { it.enabled } && runnable
         runAllButton.foreground = if (runAllButton.isEnabled) GOOD else MUTED
+        resetCasesButton.isEnabled = !running
+        resetCasesButton.foreground = if (resetCasesButton.isEnabled) TEXT else MUTED
         timeoutSpinner.isEnabled = !running
         ignoreTrailingWhitespace.isEnabled = !running
     }
