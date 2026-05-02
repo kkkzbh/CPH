@@ -8,6 +8,9 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+          <li>Add a CMake target Debug action for the selected sample, reusing the sample input through CLion input redirection.</li>
+          <li>Use CLion's native debugger executor and debugger icon for the sample Debug button.</li>
+          <li>Fix document saving before sample runs and debug launches on newer IntelliJ Platform threading rules.</li>
           <li>Fix C/C++ File run configurations by using CLion run-file build and launcher APIs.</li>
           <li>Add per-run-configuration sample storage for CMake and single-file targets.</li>
           <li>Improve error notifications, target refresh behavior, and case tab status display.</li>
