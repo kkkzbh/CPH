@@ -22,8 +22,13 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
 
+    <dependencies>
+        <module name="intellij.clion.runFile" />
+    </dependencies>
+
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="org.kkkzbh.cph.CphStateService" />
+        <projectService serviceImplementation="org.kkkzbh.cph.CphCppFileBuildCache" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphShortcutDispatcher" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphSingleFileModeService" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />

@@ -10,6 +10,7 @@ import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.wm.StatusBar
 import org.kkkzbh.cph.server.CphCppFileRunConfigurationFactory
 
 internal data class CphSingleFileModeRequest(
@@ -84,6 +85,10 @@ internal class CphSingleFileModeService(private val project: Project) {
             val settings = CphCppFileRunConfigurationFactory
                 .findOrCreate(project, file ?: return, request.displayName, request.workingDirectory)
                 .settings
+            val refresh = CphCompileSettingsSynchronizer(project).refreshCppFileWorkspace(settings, waitForTarget = false)
+            if (refresh.error != null) {
+                StatusBar.Info.set("CPH single-file target refresh failed: ${refresh.error}", project)
+            }
             if (runManager.selectedConfiguration !== settings) {
                 applyingSelection = true
                 try {

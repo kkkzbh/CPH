@@ -3,7 +3,6 @@ package org.kkkzbh.cph
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
-import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -11,14 +10,11 @@ import com.intellij.openapi.components.ComponentManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.jetbrains.cidr.cpp.runfile.CppFileBuildTargetsService
+import com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration
 import java.io.File
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 internal data class CphCompileSyncResult(
     val changed: Boolean = false,
@@ -27,43 +23,23 @@ internal data class CphCompileSyncResult(
 
 internal data class CphCppFileCompilerOptionsUpdate(
     val compilerOptions: String,
-    val syncedBase: String,
-    val syncedApplied: String,
     val changed: Boolean,
 )
 
 internal object CphCppFileCompilerOptionsSync {
     fun compute(
         current: String,
-        syncedBase: String,
-        syncedApplied: String,
         settings: CphCompileSettings,
     ): CphCppFileCompilerOptionsUpdate {
-        val base = if (syncedApplied.isNotBlank() && current == syncedApplied) {
-            syncedBase
-        } else {
-            current
-        }
         val next = if (settings.hasOverrides()) {
-            CphCompileOptions.mergeCompilerOptions(base, settings)
+            CphCompileOptions.mergeCompilerOptions("", settings)
         } else {
-            base
+            ""
         }
-        return if (settings.hasOverrides()) {
-            CphCppFileCompilerOptionsUpdate(
-                compilerOptions = next,
-                syncedBase = base,
-                syncedApplied = next,
-                changed = next != current,
-            )
-        } else {
-            CphCppFileCompilerOptionsUpdate(
-                compilerOptions = next,
-                syncedBase = "",
-                syncedApplied = "",
-                changed = next != current,
-            )
-        }
+        return CphCppFileCompilerOptionsUpdate(
+            compilerOptions = next,
+            changed = next != current,
+        )
     }
 }
 
@@ -88,9 +64,9 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
 
     fun diagnoseCppFileWorkspace(settings: RunnerAndConfigurationSettings): String {
         return runCatching {
-            val configuration = settings.configuration
-            if (!isCppFileRunConfiguration(configuration)) return@runCatching "Not a CLion C/C++ File configuration."
-            val targetsService = projectService(CPP_FILE_BUILD_TARGETS_SERVICE_CLASS, configuration.javaClass.classLoader)
+            val configuration = settings.configuration as? CppFileRunConfiguration
+                ?: return@runCatching "Not a CLion C/C++ File configuration."
+            val targetsService = project.getService(CppFileBuildTargetsService::class.java)
                 ?: return@runCatching "Cannot access CLion C/C++ File build targets service."
             formatCppFileWorkspaceDiagnostics(configuration, targetsService)
         }.getOrElse { it.message ?: it.javaClass.simpleName }
@@ -102,7 +78,7 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
     ): CphCompileSyncResult {
         return try {
             runOnEdt {
-                notifyRunConfigurationChangedOrThrow(settings)
+                refreshCppFileTarget(settings)
             }
             if (waitForTarget) {
                 waitForCppFileWorkspace(settings)
@@ -115,7 +91,7 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
 
     private fun syncCppFile(
         settings: RunnerAndConfigurationSettings,
-        targetCases: CphTargetCases,
+        @Suppress("UNUSED_PARAMETER") targetCases: CphTargetCases,
         compileSettings: CphCompileSettings,
         waitForTarget: Boolean,
     ): CphCompileSyncResult {
@@ -123,74 +99,53 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         val current = access.get()
         val update = CphCppFileCompilerOptionsSync.compute(
             current = current,
-            syncedBase = targetCases.syncedCompilerOptionsBase,
-            syncedApplied = targetCases.syncedCompilerOptionsApplied,
             settings = compileSettings,
         )
         if (!update.changed) {
             if (waitForTarget) {
-                runOnEdt {
-                    notifyRunConfigurationChangedOrThrow(settings)
-                }
-                waitForCppFileWorkspace(settings)
+                refreshCppFileTarget(settings)
             }
             return CphCompileSyncResult()
         }
 
         runOnEdt {
             access.set(update.compilerOptions)
-            notifyRunConfigurationChangedOrThrow(settings)
+            refreshCppFileTarget(settings)
         }
         if (waitForTarget) {
             waitForCppFileWorkspace(settings)
         }
-        targetCases.syncedCompilerOptionsBase = update.syncedBase
-        targetCases.syncedCompilerOptionsApplied = update.syncedApplied
         return CphCompileSyncResult(changed = true)
     }
 
     private fun waitForCppFileWorkspace(settings: RunnerAndConfigurationSettings) {
-        val configuration = settings.configuration
-        if (!isCppFileRunConfiguration(configuration)) return
-        val runFileClassLoader = configuration.javaClass.classLoader
-        val processor = projectService(CPP_FILE_WORKSPACE_PROCESSOR_CLASS, runFileClassLoader)
-            ?: throw ExecutionException("Cannot access CLion C/C++ File workspace processor.")
-        awaitCppFileWorkspaceProcessing(processor)
-        waitForCppFileBuildTarget(configuration, runFileClassLoader)
+        val configuration = settings.configuration as? CppFileRunConfiguration ?: return
+        waitForCppFileBuildTarget(configuration)
     }
 
-    private fun createCppFileConfigurationData(configuration: Any): Any? {
-        return runCatching {
-            configuration.javaClass.methods.firstOrNull {
-                it.name == "createConfigurationData" && it.parameterCount == 0
-            }?.invoke(configuration)
-        }.getOrNull()
-    }
-
-    private fun awaitCppFileWorkspaceProcessing(processor: Any) {
-        val awaitProcessing = processor.javaClass.methods.firstOrNull {
-            it.name == "awaitProcessing" && it.parameterCount == 1
-        } ?: throw ExecutionException("Cannot wait for CLion C/C++ File workspace refresh.")
-        val continuation = BlockingContinuation()
-        val returned = awaitProcessing.invoke(processor, continuation)
-        if (returned !== COROUTINE_SUSPENDED) return
-        if (!continuation.await(CPP_FILE_WORKSPACE_WAIT_SECONDS, TimeUnit.SECONDS)) {
-            throw ExecutionException("Timed out while waiting for CLion C/C++ File workspace refresh.")
+    private fun refreshCppFileTarget(settings: RunnerAndConfigurationSettings) {
+        val configuration = settings.configuration as? CppFileRunConfiguration ?: return
+        val data = configuration.generateBuildTargetAndConfigurationData()
+        configuration.setTargetAndConfigurationData(data)
+        runCatching {
+            val processor = projectService(CPP_FILE_WORKSPACE_PROCESSOR_CLASS, configuration.javaClass.classLoader)
+                ?: return@runCatching
+            val currentData = configuration.createConfigurationData()
+            processor.javaClass.methods.firstOrNull {
+                it.name == "addConfigurations" &&
+                    it.parameterCount == 2 &&
+                    it.parameterTypes[0].isAssignableFrom(List::class.java) &&
+                    it.parameterTypes[1] == Boolean::class.javaPrimitiveType
+            }?.invoke(processor, listOf(currentData), true)
         }
-        continuation.throwIfFailed()
     }
 
-    private fun waitForCppFileBuildTarget(configuration: Any, runFileClassLoader: ClassLoader) {
-        val targetsService = projectService(CPP_FILE_BUILD_TARGETS_SERVICE_CLASS, runFileClassLoader)
+    private fun waitForCppFileBuildTarget(configuration: CppFileRunConfiguration) {
+        val targetsService = project.getService(CppFileBuildTargetsService::class.java)
             ?: throw ExecutionException("Cannot access CLion C/C++ File build targets service.")
-        val getTargetOrNullFor = targetsService.javaClass.methods.firstOrNull {
-            it.name == "getTargetOrNullFor" &&
-                it.parameterCount == 1 &&
-                it.parameterTypes[0].isAssignableFrom(configuration.javaClass)
-        } ?: throw ExecutionException("Cannot inspect CLion C/C++ File build targets.")
 
         repeat(CPP_FILE_TARGET_WAIT_ATTEMPTS) {
-            val target = runCatching { getTargetOrNullFor.invoke(targetsService, configuration) }.getOrNull()
+            val target = targetsService.getTargetOrNullFor(configuration)
             if (target != null) return
             Thread.sleep(CPP_FILE_TARGET_WAIT_INTERVAL_MILLIS)
         }
@@ -198,16 +153,6 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
             "CLion did not refresh the C/C++ File build target after updating compiler options. " +
                 formatCppFileWorkspaceDiagnostics(configuration, targetsService),
         )
-    }
-
-    private fun notifyRunConfigurationChangedOrThrow(settings: RunnerAndConfigurationSettings) {
-        val runManager = RunManager.getInstance(project)
-        val fireChanged = runManager.javaClass.methods.firstOrNull {
-            it.name == "fireRunConfigurationChanged" &&
-                it.parameterCount == 1 &&
-                it.parameterTypes[0].isAssignableFrom(settings.javaClass)
-        } ?: throw ExecutionException("Cannot notify CLion that the C/C++ File configuration changed.")
-        fireChanged.invoke(runManager, settings)
     }
 
     private fun syncCMake(
@@ -255,19 +200,12 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
     }
 
     private fun cppFileCompilerOptionsAccess(settings: RunnerAndConfigurationSettings): CompilerOptionsAccess {
-        val options = settings.configuration.javaClass.methods.firstOrNull {
-            it.name == "getOptions" && it.parameterCount == 0
-        }?.invoke(settings.configuration)
-            ?: throw ExecutionException("Cannot access compiler options for C/C++ File configuration '${settings.name}'.")
-        val getter = options.javaClass.methods.firstOrNull {
-            it.name == "getCompilerOptions" && it.parameterCount == 0
-        } ?: throw ExecutionException("Cannot read compiler options for C/C++ File configuration '${settings.name}'.")
-        val setter = options.javaClass.methods.firstOrNull {
-            it.name == "setCompilerOptions" && it.parameterCount == 1 && it.parameterTypes[0] == String::class.java
-        } ?: throw ExecutionException("Cannot update compiler options for C/C++ File configuration '${settings.name}'.")
+        val configuration = settings.configuration as? CppFileRunConfiguration
+            ?: throw ExecutionException("'${settings.name}' is not a CLion C/C++ File configuration.")
+        val options = configuration.options
         return CompilerOptionsAccess(
-            get = { getter.invoke(options)?.toString().orEmpty() },
-            set = { setter.invoke(options, it) },
+            get = { options.compilerOptions.orEmpty() },
+            set = { options.compilerOptions = it },
         )
     }
 
@@ -362,20 +300,13 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
     }
 
     private fun formatCppFileWorkspaceDiagnostics(
-        configuration: Any,
-        targetsService: Any,
+        configuration: CppFileRunConfiguration,
+        targetsService: CppFileBuildTargetsService,
     ): String {
-        val currentData = runCatching { createCppFileConfigurationData(configuration).toString() }
+        val currentData = runCatching { configuration.createConfigurationData().toString() }
             .getOrElse { it.message ?: it.javaClass.simpleName }
-        val targets = runCatching {
-            targetsService.javaClass.methods.firstOrNull { it.name == "getTargets" && it.parameterCount == 0 }
-                ?.invoke(targetsService) as? Iterable<*>
-        }.getOrNull()?.joinToString(limit = 4) { target ->
-            runCatching {
-                target?.javaClass?.methods?.firstOrNull { it.name == "getData" && it.parameterCount == 0 }
-                    ?.invoke(target)
-                    .toString()
-            }.getOrElse { it.message ?: it.javaClass.simpleName }
+        val targets = targetsService.getTargets().joinToString(limit = 4) { target ->
+            target.data.toString()
         }.orEmpty()
         return "Current data: $currentData. Known targets: [$targets]."
     }
@@ -385,15 +316,6 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
             val serviceClass = Class.forName(className, true, classLoader)
             (project as ComponentManager).getService(serviceClass)
         }.getOrNull()
-    }
-
-    private fun isCppFileRunConfiguration(configuration: Any): Boolean {
-        var current: Class<*>? = configuration.javaClass
-        while (current != null) {
-            if (current.name == CPP_FILE_RUN_CONFIGURATION_CLASS) return true
-            current = current.superclass
-        }
-        return false
     }
 
     private fun <T> runOnEdt(action: () -> T): T {
@@ -414,29 +336,8 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         val set: (String) -> Unit,
     )
 
-    private class BlockingContinuation : Continuation<Any?> {
-        private val latch = CountDownLatch(1)
-        private val result = AtomicReference<Result<Any?>>()
-
-        override val context: CoroutineContext = EmptyCoroutineContext
-
-        override fun resumeWith(result: Result<Any?>) {
-            this.result.set(result)
-            latch.countDown()
-        }
-
-        fun await(timeout: Long, unit: TimeUnit): Boolean = latch.await(timeout, unit)
-
-        fun throwIfFailed() {
-            result.get()?.getOrThrow()
-        }
-    }
-
     private companion object {
-        private const val CPP_FILE_RUN_CONFIGURATION_CLASS = "com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration"
         private const val CPP_FILE_WORKSPACE_PROCESSOR_CLASS = "com.jetbrains.cidr.cpp.runfile.CppFileWorkspaceProcessor"
-        private const val CPP_FILE_BUILD_TARGETS_SERVICE_CLASS = "com.jetbrains.cidr.cpp.runfile.CppFileBuildTargetsService"
-        private const val CPP_FILE_WORKSPACE_WAIT_SECONDS = 20L
         private const val CPP_FILE_TARGET_WAIT_ATTEMPTS = 100
         private const val CPP_FILE_TARGET_WAIT_INTERVAL_MILLIS = 100L
     }

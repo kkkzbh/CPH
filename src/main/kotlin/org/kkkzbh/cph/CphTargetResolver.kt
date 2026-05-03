@@ -4,6 +4,7 @@ import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.openapi.project.Project
+import com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration
 import java.io.File
 import java.lang.reflect.Method
 
@@ -41,10 +42,13 @@ object CphTargetResolver {
         val typeName = settings.type.displayName
         val className = configuration.javaClass.name
 
-        return when (detectTargetKind(typeId, typeName, className)) {
-            CphTargetKind.CMAKE_APP -> cMakeTarget(settings, configuration)
-            CphTargetKind.CPP_FILE -> cppFileTarget(settings, configuration)
-            CphTargetKind.UNSUPPORTED -> unsupportedTarget(settings, configuration, typeName)
+        return when {
+            configuration is CppFileRunConfiguration -> cppFileTarget(settings, configuration)
+            else -> when (detectTargetKind(typeId, typeName, className)) {
+                CphTargetKind.CMAKE_APP -> cMakeTarget(settings, configuration)
+                CphTargetKind.CPP_FILE -> cppFileTarget(settings, configuration)
+                CphTargetKind.UNSUPPORTED -> unsupportedTarget(settings, configuration, typeName)
+            }
         }
     }
 
@@ -82,7 +86,7 @@ object CphTargetResolver {
         settings: RunnerAndConfigurationSettings,
         configuration: RunConfiguration,
     ): CphTargetIdentity {
-        val sourceFile = readSourceFile(configuration)
+        val sourceFile = (configuration as? CppFileRunConfiguration)?.options?.sourceFile ?: readSourceFile(configuration)
         val displayName = cppFileDisplayName(settings.name, sourceFile)
         if (sourceFile.isNullOrBlank()) {
             return CphTargetIdentity(

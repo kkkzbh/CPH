@@ -56,7 +56,7 @@ class CphStateServiceTest {
     }
 
     @Test
-    fun loadStatePreservesTargetSettingsAndMigratesLegacyCompileSettings() {
+    fun loadStatePreservesTargetSettings() {
         val service = CphStateService()
         service.loadState(
             CphState(
@@ -64,29 +64,18 @@ class CphStateServiceTest {
                     "target" to CphTargetCases(
                         timeoutMillis = 2500,
                         ignoreTrailingWhitespace = false,
-                        cppStandard = CphCppStandard.CPP20,
-                        compileOptions = "-O2 -Wall",
-                        syncedCompilerOptionsBase = "-O0",
-                        syncedCompilerOptionsApplied = "-O0 -O2 -Wall -std=c++20",
                     ),
                 ),
             ),
         )
 
         val targetCases = service.getState().targets.getValue("target")
-        val compileSettings = service.getState().compileSettings
         assertEquals(2500, targetCases.timeoutMillis)
         assertFalse(targetCases.ignoreTrailingWhitespace)
-        assertEquals(CphCppStandard.CPP20, compileSettings.cppStandard)
-        assertEquals("-O2 -Wall", compileSettings.compileOptions)
-        assertEquals(null, targetCases.cppStandard)
-        assertEquals(null, targetCases.compileOptions)
-        assertEquals("-O0", targetCases.syncedCompilerOptionsBase)
-        assertEquals("-O0 -O2 -Wall -std=c++20", targetCases.syncedCompilerOptionsApplied)
     }
 
     @Test
-    fun loadStatePreservesGlobalCompileSettingsOverLegacyTargetSettings() {
+    fun loadStatePreservesGlobalCompileSettings() {
         val service = CphStateService()
         service.loadState(
             CphState(
@@ -94,21 +83,12 @@ class CphStateServiceTest {
                     cppStandard = CphCppStandard.CPP23,
                     compileOptions = "-O3",
                 ),
-                targets = linkedMapOf(
-                    "target" to CphTargetCases(
-                        cppStandard = CphCppStandard.CPP20,
-                        compileOptions = "-O2 -Wall",
-                    ),
-                ),
             ),
         )
 
         val compileSettings = service.getState().compileSettings
-        val targetCases = service.getState().targets.getValue("target")
         assertEquals(CphCppStandard.CPP23, compileSettings.cppStandard)
         assertEquals("-O3", compileSettings.compileOptions)
-        assertEquals(null, targetCases.cppStandard)
-        assertEquals(null, targetCases.compileOptions)
     }
 
     @Test

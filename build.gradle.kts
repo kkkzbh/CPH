@@ -44,6 +44,7 @@ dependencies {
             clion(platformVersion.get())
         }
         bundledPlugin("com.intellij.clion")
+        bundledModule("intellij.clion.runFile")
         testFramework(TestFrameworkType.Platform)
     }
 }

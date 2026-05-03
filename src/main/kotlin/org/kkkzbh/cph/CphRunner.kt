@@ -14,8 +14,13 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.components.service
+import com.jetbrains.cidr.cpp.runfile.CppFileBuildBeforeRunTaskProvider
+import com.jetbrains.cidr.cpp.runfile.CppFileBuildTargetsService
+import com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
@@ -23,8 +28,46 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 
+internal data class CphCppFileBuildKey(
+    val settingsName: String,
+    val sourcePath: String,
+    val compilerOptions: String,
+    val toolchainName: String,
+    val compilerFile: String,
+    val workingDirectory: String,
+    val sourceModified: Long,
+    val sourceSize: Long,
+)
+
+@Service(Service.Level.PROJECT)
+internal class CphCppFileBuildCache {
+    private data class Entry(
+        val key: CphCppFileBuildKey,
+        val executablePath: String,
+        val executableModified: Long,
+    )
+
+    private val entries = linkedMapOf<String, Entry>()
+
+    fun matches(settingsName: String, key: CphCppFileBuildKey, executable: File): Boolean {
+        val entry = entries[settingsName] ?: return false
+        return entry.key == key &&
+            entry.executablePath == executable.absolutePath &&
+            entry.executableModified == executable.lastModified()
+    }
+
+    fun remember(settingsName: String, key: CphCppFileBuildKey, executable: File) {
+        entries[settingsName] = Entry(
+            key = key,
+            executablePath = executable.absolutePath,
+            executableModified = executable.lastModified(),
+        )
+    }
+}
+
 class CphRunner(private val project: Project) {
     private val log = Logger.getInstance(CphRunner::class.java)
+    private val cppFileBuildCache = project.service<CphCppFileBuildCache>()
     private val preparedBuilds = linkedSetOf<String>()
 
     fun runCase(
@@ -400,8 +443,11 @@ class CphRunner(private val project: Project) {
         startedAt: Long,
     ): CphCaseResult? {
         return try {
+            val buildKey = cppFileBuildKey(settings)
+            if (isCppFileBuildFresh(settings, environment, buildKey)) return null
             val ok = executeCppFileBuildTask(settings, environment)
             if (ok) {
+                markCppFileBuildFresh(settings, environment, buildKey)
                 null
             } else {
                 CphCaseResult(
@@ -432,23 +478,14 @@ class CphRunner(private val project: Project) {
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
         environment: ExecutionEnvironment,
     ): Boolean {
-        val configuration = settings.configuration
+        val configuration = settings.configuration as? CppFileRunConfiguration
+            ?: throw ExecutionException("'${settings.name}' is not a CLion C/C++ File configuration.")
         val provider = cppFileBuildBeforeRunTaskProvider()
             ?: throw ExecutionException("Cannot find CLion C/C++ File build task provider.")
         val task = provider.createTask(configuration)
             ?: throw ExecutionException("Cannot create CLion C/C++ File build task for '${settings.name}'.")
 
-        val executeTask = provider.javaClass.methods.firstOrNull {
-            it.name == "executeTask" &&
-                it.parameterCount == 4 &&
-                it.parameterTypes[0].name == "com.intellij.openapi.actionSystem.DataContext" &&
-                it.parameterTypes[1].isAssignableFrom(configuration.javaClass) &&
-                it.parameterTypes[2].isAssignableFrom(environment.javaClass) &&
-                it.parameterTypes[3].isAssignableFrom(task.javaClass)
-        } ?: throw ExecutionException("Cannot find CLion C/C++ File build executor.")
-
-        return executeTask.invoke(provider, DataContext.EMPTY_CONTEXT, configuration, environment, task) as? Boolean
-            ?: false
+        return provider.executeTask(DataContext.EMPTY_CONTEXT, configuration, environment, task)
     }
 
     private fun isCppFileTargetMiss(error: Throwable): Boolean {
@@ -456,10 +493,56 @@ class CphRunner(private val project: Project) {
             error.message?.contains("Collection contains no element matching the predicate") == true
     }
 
-    private fun cppFileBuildBeforeRunTaskProvider(): BeforeRunTaskProvider<*>? {
-        return BeforeRunTaskProvider.EP_NAME.getExtensions(project).firstOrNull {
-            it.javaClass.name == "com.jetbrains.cidr.cpp.runfile.CppFileBuildBeforeRunTaskProvider"
-        }
+    private fun cppFileBuildBeforeRunTaskProvider(): CppFileBuildBeforeRunTaskProvider? {
+        return BeforeRunTaskProvider.EP_NAME.getExtensions(project)
+            .filterIsInstance<CppFileBuildBeforeRunTaskProvider>()
+            .firstOrNull()
+    }
+
+    private fun isCppFileBuildFresh(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        environment: ExecutionEnvironment,
+        buildKey: CphCppFileBuildKey,
+    ): Boolean {
+        val configuration = settings.configuration as? CppFileRunConfiguration ?: return false
+        val targetsService = project.getService(CppFileBuildTargetsService::class.java) ?: return false
+        if (targetsService.getTargetOrNullFor(configuration) == null) return false
+        val source = configuration.options.sourceFile?.let(::File)?.takeIf { it.isFile } ?: return false
+        val executable = runCatching {
+            resolveCppFileExecutable(settings, environment.executor, environment)
+        }.getOrNull()?.takeIf { it.isFile } ?: return false
+        if (!cppFileBuildCache.matches(settings.name, buildKey, executable)) return false
+        if (source.lastModified() > executable.lastModified()) return false
+        log.info("CPH C/C++ File build cache hit for '${settings.name}': ${executable.absolutePath}")
+        return true
+    }
+
+    private fun markCppFileBuildFresh(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        environment: ExecutionEnvironment,
+        buildKey: CphCppFileBuildKey,
+    ) {
+        val executable = runCatching {
+            resolveCppFileExecutable(settings, environment.executor, environment)
+        }.getOrNull()?.takeIf { it.isFile } ?: return
+        cppFileBuildCache.remember(settings.name, buildKey, executable)
+    }
+
+    private fun cppFileBuildKey(settings: com.intellij.execution.RunnerAndConfigurationSettings): CphCppFileBuildKey {
+        val configuration = settings.configuration as? CppFileRunConfiguration
+            ?: return CphCppFileBuildKey(settings.name, "", "", "", "", "", 0L, 0L)
+        val source = configuration.options.sourceFile.orEmpty()
+        val sourceFile = source.takeIf { it.isNotBlank() }?.let(::File)
+        return CphCppFileBuildKey(
+            settingsName = settings.name,
+            sourcePath = sourceFile?.absolutePath ?: source,
+            compilerOptions = configuration.options.compilerOptions.orEmpty(),
+            toolchainName = configuration.options.toolchainName.orEmpty(),
+            compilerFile = configuration.options.compilerFile.orEmpty(),
+            workingDirectory = configuration.workingDirectory.orEmpty(),
+            sourceModified = sourceFile?.takeIf { it.isFile }?.lastModified() ?: 0L,
+            sourceSize = sourceFile?.takeIf { it.isFile }?.length() ?: 0L,
+        )
     }
 
     private fun resolveCppFileCommandLine(
@@ -477,8 +560,7 @@ class CphRunner(private val project: Project) {
             it.name == "getRunFileAndEnvironment" && it.parameterCount == 0
         }?.let { invokeReflective(it, launcher) }
             ?: throw ExecutionException("Cannot resolve CLion C/C++ File executable for '${settings.name}'.")
-        val runFile = pairComponent(runFileAndEnvironment, "component1") as? File
-            ?: throw ExecutionException("CLion C/C++ File launcher did not return an executable for '${settings.name}'.")
+        val runFile = runFileFromPair(settings, runFileAndEnvironment)
         if (!runFile.isFile) {
             throw ExecutionException("Executable is not ready: ${runFile.absolutePath}")
         }
@@ -490,6 +572,27 @@ class CphRunner(private val project: Project) {
         createCommandLine.isAccessible = true
         return invokeReflective(createCommandLine, launcher, state, runFile, cppEnvironment, false, false) as? GeneralCommandLine
             ?: throw ExecutionException("CLion C/C++ File launcher returned an invalid command line for '${settings.name}'.")
+    }
+
+    private fun resolveCppFileExecutable(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        executor: Executor,
+        environment: ExecutionEnvironment,
+    ): File {
+        val state = settings.configuration.getState(executor, environment)
+            ?: throw ExecutionException("Cannot create CLion run state for C/C++ File configuration '${settings.name}'.")
+        val launcher = cppFileLauncher(state)
+            ?: throw ExecutionException("Cannot access CLion C/C++ File launcher for '${settings.name}'.")
+        val runFileAndEnvironment = launcher.javaClass.methods.firstOrNull {
+            it.name == "getRunFileAndEnvironment" && it.parameterCount == 0
+        }?.let { invokeReflective(it, launcher) }
+            ?: throw ExecutionException("Cannot resolve CLion C/C++ File executable for '${settings.name}'.")
+        return runFileFromPair(settings, runFileAndEnvironment)
+    }
+
+    private fun runFileFromPair(settings: com.intellij.execution.RunnerAndConfigurationSettings, pair: Any): File {
+        return pairComponent(pair, "component1") as? File
+            ?: throw ExecutionException("CLion C/C++ File launcher did not return an executable for '${settings.name}'.")
     }
 
     private fun resolveCMakeLaunchPlan(

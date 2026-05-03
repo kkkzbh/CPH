@@ -117,28 +117,22 @@ class CphCompileOptionsTest {
     @Test
     fun cppFileCompilerOptionsSyncWritesDedupedOptionsWithComboStandardPriority() {
         val update = CphCppFileCompilerOptionsSync.compute(
-            current = "-O0 -std=c++11",
-            syncedBase = "",
-            syncedApplied = "",
+            current = "",
             settings = CphCompileSettings(CphCppStandard.CPP23, "-Wall -std=c++17"),
         )
 
-        assertEquals("-O0 -Wall -std=c++23", update.compilerOptions)
-        assertEquals("-O0 -std=c++11", update.syncedBase)
-        assertEquals("-O0 -Wall -std=c++23", update.syncedApplied)
+        assertEquals("-Wall -std=c++23", update.compilerOptions)
+        assertEquals(true, update.changed)
     }
 
     @Test
-    fun cppFileCompilerOptionsSyncRestoresBaseWhenOverridesAreCleared() {
+    fun cppFileCompilerOptionsSyncClearsOptionsWhenOverridesAreCleared() {
         val update = CphCppFileCompilerOptionsSync.compute(
             current = "-O0 -Wall -std=c++23",
-            syncedBase = "-O0 -std=c++11",
-            syncedApplied = "-O0 -Wall -std=c++23",
             settings = CphCompileSettings(),
         )
 
-        assertEquals("-O0 -std=c++11", update.compilerOptions)
-        assertEquals("", update.syncedBase)
-        assertEquals("", update.syncedApplied)
+        assertEquals("", update.compilerOptions)
+        assertEquals(true, update.changed)
     }
 }

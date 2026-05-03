@@ -69,6 +69,7 @@ internal class CphProblemImporter(private val project: Project) {
                 project = project,
                 sourceFile = sourceFile,
                 displayName = payload.name.ifBlank { coords.index },
+                workingDirectory = CphStateService.getInstance(project).getState().singleFileWorkingDirectory,
             )
             val identity = CphTargetResolver.fromSettings(result.settings)
             val service = CphStateService.getInstance(project)

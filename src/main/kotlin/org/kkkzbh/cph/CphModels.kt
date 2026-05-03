@@ -54,10 +54,6 @@ data class CphTargetCases(
     var displayName: String = "",
     var timeoutMillis: Long = CPH_DEFAULT_TIMEOUT_MILLIS,
     var ignoreTrailingWhitespace: Boolean = true,
-    var cppStandard: CphCppStandard? = null,
-    var compileOptions: String? = null,
-    var syncedCompilerOptionsBase: String = "",
-    var syncedCompilerOptionsApplied: String = "",
     var cases: MutableList<CphTestCase> = mutableListOf(),
 )
 
@@ -104,11 +100,8 @@ class CphStateService : PersistentStateComponent<CphState> {
     override fun getState(): CphState = state
 
     override fun loadState(state: CphState) {
-        migrateTargetCompileSettings(state)
         state.targets.values.forEach {
             it.timeoutMillis = it.timeoutMillis.coerceIn(CPH_MIN_TIMEOUT_MILLIS, CPH_MAX_TIMEOUT_MILLIS)
-            it.cppStandard = null
-            it.compileOptions = null
         }
         state.ui.inputHeight = clampEditorHeight(state.ui.inputHeight)
         state.ui.expectedHeight = clampEditorHeight(state.ui.expectedHeight)
@@ -117,22 +110,6 @@ class CphStateService : PersistentStateComponent<CphState> {
         state.ui.editorFontSize = clampEditorFontSize(state.ui.editorFontSize)
         state.singleFileWorkingDirectory = normalizeSingleFileWorkingDirectory(state.singleFileWorkingDirectory)
         this.state = state
-    }
-
-    private fun migrateTargetCompileSettings(state: CphState) {
-        if (state.compileSettings.cppStandard != CphCppStandard.FOLLOW_TARGET ||
-            state.compileSettings.compileOptions.isNotBlank()
-        ) {
-            return
-        }
-        val legacy = state.targets.values.firstOrNull {
-            it.cppStandard != null && it.cppStandard != CphCppStandard.FOLLOW_TARGET ||
-                !it.compileOptions.isNullOrBlank()
-        } ?: state.targets.values.firstOrNull {
-            it.cppStandard != null || it.compileOptions != null
-        } ?: return
-        state.compileSettings.cppStandard = legacy.cppStandard ?: CphCppStandard.FOLLOW_TARGET
-        state.compileSettings.compileOptions = legacy.compileOptions.orEmpty()
     }
 
     fun getOrCreateTargetCases(identity: CphTargetIdentity): CphTargetCases {
