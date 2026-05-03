@@ -210,9 +210,10 @@ function App() {
     },
     img({ src, alt }) {
       if (!src) return null;
+      const isQuickStartImage = src.includes("/assets/quick-start-");
       return (
         <button
-          className="markdown-image"
+          className={`markdown-image ${isQuickStartImage ? "is-quick-start" : ""}`}
           type="button"
           onClick={() => setLightbox({ src, alt: alt ?? "" })}
         >

@@ -459,6 +459,24 @@ pre {
   height: auto;
 }
 
+.markdown-image.is-quick-start {
+  width: fit-content;
+  max-width: min(100%, 720px);
+  margin: 24px auto 28px;
+}
+
+.markdown-image.is-quick-start img {
+  width: auto;
+  max-width: 100%;
+  max-height: 560px;
+  background: #ffffff;
+  object-fit: contain;
+}
+
+.markdown-image.is-quick-start span {
+  text-align: center;
+}
+
 .markdown-image span {
   display: block;
   padding: 9px 12px;
