@@ -7,6 +7,8 @@ import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import org.kkkzbh.cph.CphTargetKind
+import org.kkkzbh.cph.CphTargetResolver
 
 internal data class CphRunConfigurationCreation(
     val settings: RunnerAndConfigurationSettings,
@@ -28,8 +30,8 @@ internal object CphCppFileRunConfigurationFactory {
         val sourcePath = sourceFile.path
 
         runManager.allSettings.firstOrNull { settings ->
-            isCppFileRunConfiguration(settings.configuration) &&
-                runCatching { readSourceFile(settings.configuration) }.getOrNull() == sourcePath
+            isCppFileRunConfiguration(settings) &&
+                runCatching { sourcePathsEqual(readSourceFile(settings.configuration), sourcePath) }.getOrDefault(false)
         }?.let { return CphRunConfigurationCreation(it, createdNew = false) }
 
         val type = findCppFileConfigurationType()
@@ -59,7 +61,7 @@ internal object CphCppFileRunConfigurationFactory {
 
     private fun isCppFileConfigurationType(type: ConfigurationType): Boolean {
         val typeId = type.id
-        val displayName = runCatching { type.displayName.toString() }.getOrDefault("")
+        val displayName = runCatching { type.displayName }.getOrDefault("")
         val className = type.javaClass.name
         val candidates = listOf(typeId, displayName, className)
         return candidates.any {
@@ -105,7 +107,7 @@ internal object CphCppFileRunConfigurationFactory {
         }.getOrDefault(false)
     }
 
-    private fun readSourceFile(configuration: Any): String? {
+    internal fun readSourceFile(configuration: Any): String? {
         for (getter in GETTERS) {
             invokeNoArgString(configuration, getter)?.let { return it }
             val options = runCatching {
@@ -116,6 +118,25 @@ internal object CphCppFileRunConfigurationFactory {
             invokeNoArgString(options, getter)?.let { return it }
         }
         return null
+    }
+
+    internal fun sourcePathsEqual(storedPath: String?, expectedPath: String): Boolean {
+        val stored = normalizeSourcePath(storedPath) ?: return false
+        val expected = normalizeSourcePath(expectedPath) ?: return false
+        return stored == expected
+    }
+
+    private fun normalizeSourcePath(path: String?): String? {
+        val text = path?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val withoutFileScheme = when {
+            text.startsWith("file://") -> text.removePrefix("file://")
+            else -> text
+        }
+        return withoutFileScheme
+            .substringBefore('?')
+            .substringBefore('#')
+            .replace('\\', '/')
+            .removeSuffix("/")
     }
 
     private fun invokeNoArgString(target: Any, methodName: String): String? {
@@ -134,10 +155,19 @@ internal object CphCppFileRunConfigurationFactory {
         return "$base ($i)"
     }
 
-    private fun isCppFileRunConfiguration(configuration: Any): Boolean {
-        return runCatching {
-            Class.forName(CPP_FILE_RUN_CONFIGURATION_CLASS).isAssignableFrom(configuration.javaClass)
-        }.getOrDefault(false)
+    private fun isCppFileRunConfiguration(settings: RunnerAndConfigurationSettings): Boolean {
+        val configuration = settings.configuration
+        if (runCatching {
+                Class.forName(CPP_FILE_RUN_CONFIGURATION_CLASS).isAssignableFrom(configuration.javaClass)
+            }.getOrDefault(false)
+        ) {
+            return true
+        }
+        return CphTargetResolver.detectTargetKind(
+            typeId = settings.type.id,
+            typeName = settings.type.displayName,
+            className = configuration.javaClass.name,
+        ) == CphTargetKind.CPP_FILE
     }
 
     private val SETTERS = listOf("setSourceFile", "setFilePath", "setSourcePath")

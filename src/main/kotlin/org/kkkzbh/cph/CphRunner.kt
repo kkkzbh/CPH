@@ -32,6 +32,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean = true,
     ): CphCaseResult {
         val settings = identity.settings
             ?: return CphCaseResult(CphVerdict.ERROR, message = identity.message)
@@ -40,8 +41,21 @@ class CphRunner(private val project: Project) {
         }
 
         return when (identity.kind) {
-            CphTargetKind.CMAKE_APP -> runExecutableFallback(settings, testCase, timeoutMillis, ignoreTrailingWhitespace, null)
-            CphTargetKind.CPP_FILE -> runCppFileConfiguration(settings, testCase, timeoutMillis, ignoreTrailingWhitespace)
+            CphTargetKind.CMAKE_APP -> runExecutableFallback(
+                settings,
+                testCase,
+                timeoutMillis,
+                ignoreTrailingWhitespace,
+                compareExpectedOutput,
+                null,
+            )
+            CphTargetKind.CPP_FILE -> runCppFileConfiguration(
+                settings,
+                testCase,
+                timeoutMillis,
+                ignoreTrailingWhitespace,
+                compareExpectedOutput,
+            )
             CphTargetKind.UNSUPPORTED -> CphCaseResult(CphVerdict.ERROR, message = identity.message)
         }
     }
@@ -83,6 +97,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean,
     ): CphCaseResult {
         val setupStartedAt = System.nanoTime()
         return try {
@@ -96,6 +111,7 @@ class CphRunner(private val project: Project) {
                 testCase = testCase,
                 timeoutMillis = timeoutMillis,
                 ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                compareExpectedOutput = compareExpectedOutput,
                 runnerLabel = "CLion C/C++ File runner",
             )
         } catch (e: Exception) {
@@ -112,6 +128,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean,
         originalError: Throwable?,
     ): CphCaseResult {
         val setupStartedAt = System.nanoTime()
@@ -132,6 +149,7 @@ class CphRunner(private val project: Project) {
                 testCase = testCase,
                 timeoutMillis = timeoutMillis,
                 ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                compareExpectedOutput = compareExpectedOutput,
                 runnerLabel = "fallback executable runner",
             )
         } catch (e: Exception) {
@@ -149,6 +167,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean,
         runnerLabel: String,
     ): CphCaseResult {
         return runProcess(
@@ -160,6 +179,7 @@ class CphRunner(private val project: Project) {
             testCase = testCase,
             timeoutMillis = timeoutMillis,
             ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+            compareExpectedOutput = compareExpectedOutput,
             runnerLabel = runnerLabel,
         )
     }
@@ -169,6 +189,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean,
         runnerLabel: String,
     ): CphCaseResult {
         return runProcess(
@@ -176,6 +197,7 @@ class CphRunner(private val project: Project) {
             testCase = testCase,
             timeoutMillis = timeoutMillis,
             ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+            compareExpectedOutput = compareExpectedOutput,
             runnerLabel = runnerLabel,
         )
     }
@@ -185,6 +207,7 @@ class CphRunner(private val project: Project) {
         testCase: CphTestCase,
         timeoutMillis: Long,
         ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean,
         runnerLabel: String,
     ): CphCaseResult {
         val startedAt = System.nanoTime()
@@ -225,6 +248,17 @@ class CphRunner(private val project: Project) {
                 exitCode = exitCode,
                 durationMillis = elapsedMillis(startedAt),
                 message = "Process exited with code $exitCode.",
+            )
+        }
+
+        if (!compareExpectedOutput) {
+            return CphCaseResult(
+                verdict = CphVerdict.OK,
+                actualOutput = actualOutput,
+                stderr = stderr,
+                exitCode = exitCode,
+                durationMillis = elapsedMillis(startedAt),
+                message = "Process completed successfully ($runnerLabel)",
             )
         }
 

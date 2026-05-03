@@ -175,8 +175,8 @@ object CphTargetResolver {
     }
 
     private fun readSourceFile(configuration: RunConfiguration): String? {
-        return readNamedValue(configuration, "getSourceFile")
-            ?: readOptionsValue(configuration, "getSourceFile")
+        return readNamedValue(configuration, "getSourceFile", "getFilePath", "getSourcePath")
+            ?: readOptionsValue(configuration, "getSourceFile", "getFilePath", "getSourcePath")
     }
 
     private fun readNamedValue(configuration: RunConfiguration, vararg methodNames: String): String? {
@@ -191,13 +191,16 @@ object CphTargetResolver {
         return null
     }
 
-    private fun readOptionsValue(configuration: RunConfiguration, methodName: String): String? {
+    private fun readOptionsValue(configuration: RunConfiguration, vararg methodNames: String): String? {
         val options = configuration.javaClass.methods.firstOrNull {
             it.name == "getOptions" && it.parameterCount == 0
         }?.let { method ->
             runCatching { method.invoke(configuration) }.getOrNull()
         } ?: return null
-        return invokeNoArg(options, methodName)?.takeIf { it.isNotBlank() }
+        for (methodName in methodNames) {
+            invokeNoArg(options, methodName)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return null
     }
 
     private fun renderValue(value: Any): String? {

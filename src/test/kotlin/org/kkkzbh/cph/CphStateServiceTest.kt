@@ -154,6 +154,24 @@ class CphStateServiceTest {
         val ui = service.getState().ui
         assertTrue(ui.outputSplitEnabled)
         assertEquals(0.5, ui.outputSplitRatio, 0.0)
+        assertEquals(CPH_DEFAULT_EDITOR_FONT_SIZE, ui.editorFontSize)
+        assertFalse(ui.noExpectedModeEnabled)
+    }
+
+    @Test
+    fun loadStateDefaultsSingleFileModeEnabled() {
+        val service = CphStateService()
+        service.loadState(CphState())
+
+        assertTrue(service.getState().singleFileModeEnabled)
+    }
+
+    @Test
+    fun loadStatePreservesDisabledSingleFileMode() {
+        val service = CphStateService()
+        service.loadState(CphState(singleFileModeEnabled = false))
+
+        assertFalse(service.getState().singleFileModeEnabled)
     }
 
     @Test
@@ -184,6 +202,36 @@ class CphStateServiceTest {
 
         assertEquals(0.0, low.getState().ui.outputSplitRatio, 0.0)
         assertEquals(1.0, high.getState().ui.outputSplitRatio, 0.0)
+    }
+
+    @Test
+    fun loadStatePreservesNoExpectedModeAndEditorFontSize() {
+        val service = CphStateService()
+        service.loadState(
+            CphState(
+                ui = CphUiState(
+                    editorFontSize = 18,
+                    noExpectedModeEnabled = true,
+                ),
+            ),
+        )
+
+        val ui = service.getState().ui
+        assertEquals(18, ui.editorFontSize)
+        assertTrue(ui.noExpectedModeEnabled)
+    }
+
+    @Test
+    fun loadStateClampsInvalidEditorFontSizes() {
+        val low = CphStateService().also {
+            it.loadState(CphState(ui = CphUiState(editorFontSize = 1)))
+        }
+        val high = CphStateService().also {
+            it.loadState(CphState(ui = CphUiState(editorFontSize = 100)))
+        }
+
+        assertEquals(CPH_MIN_EDITOR_FONT_SIZE, low.getState().ui.editorFontSize)
+        assertEquals(CPH_MAX_EDITOR_FONT_SIZE, high.getState().ui.editorFontSize)
     }
 
     @Test

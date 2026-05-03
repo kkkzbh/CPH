@@ -16,9 +16,13 @@ internal const val CPH_DEFAULT_EXPECTED_HEIGHT = 135
 internal const val CPH_DEFAULT_ACTUAL_HEIGHT = 135
 internal const val CPH_MIN_EDITOR_HEIGHT = 80
 internal const val CPH_MAX_EDITOR_HEIGHT = 800
+internal const val CPH_DEFAULT_EDITOR_FONT_SIZE = 13
+internal const val CPH_MIN_EDITOR_FONT_SIZE = 10
+internal const val CPH_MAX_EDITOR_FONT_SIZE = 28
 
 enum class CphVerdict {
     NOT_RUN,
+    OK,
     AC,
     WA,
     RE,
@@ -71,12 +75,15 @@ data class CphUiState(
     var actualHeight: Int = CPH_DEFAULT_ACTUAL_HEIGHT,
     var outputSplitEnabled: Boolean = true,
     var outputSplitRatio: Double = 0.5,
+    var editorFontSize: Int = CPH_DEFAULT_EDITOR_FONT_SIZE,
+    var noExpectedModeEnabled: Boolean = false,
 )
 
 data class CphState(
     var targets: MutableMap<String, CphTargetCases> = linkedMapOf(),
     var compileSettings: CphGlobalCompileSettings = CphGlobalCompileSettings(),
     var ui: CphUiState = CphUiState(),
+    var singleFileModeEnabled: Boolean = true,
 )
 
 internal interface CphCasesChangedListener {
@@ -105,6 +112,7 @@ class CphStateService : PersistentStateComponent<CphState> {
         state.ui.expectedHeight = clampEditorHeight(state.ui.expectedHeight)
         state.ui.actualHeight = clampEditorHeight(state.ui.actualHeight)
         state.ui.outputSplitRatio = clampOutputSplitRatio(state.ui.outputSplitRatio)
+        state.ui.editorFontSize = clampEditorFontSize(state.ui.editorFontSize)
         this.state = state
     }
 
@@ -145,5 +153,7 @@ class CphStateService : PersistentStateComponent<CphState> {
         fun clampOutputSplitRatio(ratio: Double): Double {
             return if (ratio.isFinite()) ratio.coerceIn(0.0, 1.0) else 0.5
         }
+
+        fun clampEditorFontSize(size: Int): Int = size.coerceIn(CPH_MIN_EDITOR_FONT_SIZE, CPH_MAX_EDITOR_FONT_SIZE)
     }
 }
