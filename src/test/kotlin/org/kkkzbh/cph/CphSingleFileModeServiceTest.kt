@@ -15,6 +15,7 @@ class CphSingleFileModeServiceTest {
                 fileName = "main.cpp",
                 inProject = true,
                 lastObservedPath = null,
+                workingDirectory = ".cph/",
             ),
         )
     }
@@ -29,6 +30,7 @@ class CphSingleFileModeServiceTest {
                 fileName = "main.h",
                 inProject = true,
                 lastObservedPath = null,
+                workingDirectory = ".cph/",
             ),
         )
     }
@@ -43,6 +45,7 @@ class CphSingleFileModeServiceTest {
                 fileName = "main.cpp",
                 inProject = false,
                 lastObservedPath = null,
+                workingDirectory = ".cph/",
             ),
         )
     }
@@ -57,6 +60,7 @@ class CphSingleFileModeServiceTest {
                 fileName = "main.cpp",
                 inProject = true,
                 lastObservedPath = "/project/main.cpp",
+                workingDirectory = ".cph/",
             ),
         )
     }
@@ -70,9 +74,10 @@ class CphSingleFileModeServiceTest {
             fileName = "main.cpp",
             inProject = true,
             lastObservedPath = "/project/other.cpp",
+            workingDirectory = ".cph/",
         )
 
-        assertEquals(CphSingleFileModeRequest("/project/main.cpp", "main.cpp"), request)
+        assertEquals(CphSingleFileModeRequest("/project/main.cpp", "main.cpp", ".cph/"), request)
     }
 
     @Test
@@ -84,9 +89,25 @@ class CphSingleFileModeServiceTest {
             fileName = "main.cpp",
             inProject = true,
             lastObservedPath = "/project/main.cpp",
+            workingDirectory = ".cph/",
             force = true,
         )
 
-        assertEquals(CphSingleFileModeRequest("/project/main.cpp", "main.cpp"), request)
+        assertEquals(CphSingleFileModeRequest("/project/main.cpp", "main.cpp", ".cph/"), request)
+    }
+
+    @Test
+    fun blankWorkingDirectoryUsesDefault() {
+        val request = CphSingleFileModePolicy.request(
+            enabled = true,
+            path = "/project/main.cpp",
+            extension = "cpp",
+            fileName = "main.cpp",
+            inProject = true,
+            lastObservedPath = "/project/other.cpp",
+            workingDirectory = " ",
+        )
+
+        assertEquals(CphSingleFileModeRequest("/project/main.cpp", "main.cpp", ".cph/"), request)
     }
 }

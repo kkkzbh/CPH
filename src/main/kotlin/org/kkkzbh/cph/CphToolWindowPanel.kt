@@ -12,6 +12,8 @@ import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteIntentReadAction
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
@@ -46,6 +48,7 @@ import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.ScrollPaneConstants
 import javax.swing.JSplitPane
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
@@ -63,6 +66,7 @@ import javax.swing.text.Highlighter
 import javax.swing.text.JTextComponent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.io.File
 import kotlin.math.roundToInt
 
 internal object CphUiText {
@@ -180,6 +184,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var pendingTargetRefresh = false
     private var applyingTargetSettings = false
     private var applyingShortcutSettings = false
+    private var applyingWorkingDirectorySettings = false
 
     private val compileSettingsSynchronizer = CphCompileSettingsSynchronizer(project)
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
@@ -196,6 +201,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val noExpectedModeEnabled = JCheckBox("无 Expected 模式")
     private val cppStandardCombo = JComboBox(CphCppStandard.entries.toTypedArray())
     private val compileOptionsField = JBTextField()
+    private val singleFileWorkingDirectoryField = JBTextField()
+    private val singleFileWorkingDirectoryChooserButton = JButton(AllIcons.Nodes.Folder)
     private val runAllShortcutField = CphShortcutTextField()
     private val runSelectedCaseShortcutField = CphShortcutTextField()
     private val debugSelectedCaseShortcutField = CphShortcutTextField()
@@ -239,14 +246,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runAllButton.toolTipText = "Run all enabled cases"
         resetCasesButton.toolTipText = "Delete all cases and create Case 1"
         runSelectedCaseButton.toolTipText = "Run this case"
-        debugSelectedCaseButton.toolTipText = "Debug this case with the selected CMake target"
+        debugSelectedCaseButton.toolTipText = "Debug this case with the selected run target"
         settingsButton.toolTipText = "Settings"
         singleFileModeEnabled.toolTipText = "Automatically select or create the C/C++ File run target for the focused .cpp file"
+        singleFileWorkingDirectoryField.toolTipText = "Working directory for CPH-managed C/C++ File run targets"
+        singleFileWorkingDirectoryChooserButton.toolTipText = "Choose working directory"
         configureRunAllButton()
         configureResetCasesButton()
         configureRunSelectedCaseButton()
         configureDebugSelectedCaseButton()
         configureSettingsButton()
+        configureWorkingDirectoryChooserButton()
 
         settingsButton.addActionListener { toggleSettingsPanel() }
         runAllButton.addActionListener { runAllCases() }
@@ -259,6 +269,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 CphSingleFileModeService.getInstance(project).syncForCurrentFile(force = true)
             }
         }
+        singleFileWorkingDirectoryChooserButton.addActionListener { chooseSingleFileWorkingDirectory() }
+        singleFileWorkingDirectoryField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = persist()
+            override fun removeUpdate(e: DocumentEvent) = persist()
+            override fun changedUpdate(e: DocumentEvent) = persist()
+
+            private fun persist() {
+                persistSingleFileWorkingDirectory()
+            }
+        })
         ignoreTrailingWhitespace.addActionListener {
             currentTargetCases.ignoreTrailingWhitespace = ignoreTrailingWhitespace.isSelected
             refreshActualDiffHighlights()
@@ -403,6 +423,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         settingsButton.font = settingsButton.font.deriveFont(Font.BOLD, settingsButton.font.size2D + 1.0f)
     }
 
+    private fun configureWorkingDirectoryChooserButton() {
+        singleFileWorkingDirectoryChooserButton.foreground = TEXT
+        singleFileWorkingDirectoryChooserButton.background = SURFACE
+        singleFileWorkingDirectoryChooserButton.isOpaque = false
+        singleFileWorkingDirectoryChooserButton.isContentAreaFilled = false
+        singleFileWorkingDirectoryChooserButton.isBorderPainted = false
+        singleFileWorkingDirectoryChooserButton.isFocusPainted = false
+        singleFileWorkingDirectoryChooserButton.border = EmptyBorder(0, 6, 0, 0)
+        singleFileWorkingDirectoryChooserButton.preferredSize = Dimension(30, 28)
+        singleFileWorkingDirectoryChooserButton.minimumSize = singleFileWorkingDirectoryChooserButton.preferredSize
+        singleFileWorkingDirectoryChooserButton.maximumSize = singleFileWorkingDirectoryChooserButton.preferredSize
+    }
+
     private fun buildCenter(): JComponent {
         contentCards.background = PANEL
         contentCards.add(buildMainView(), MAIN_VIEW_CARD)
@@ -438,12 +471,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         compileOptionsField.foreground = TEXT
         compileOptionsField.caretColor = TEXT
         compileOptionsField.emptyText.text = "-O2 -Wall"
+        singleFileWorkingDirectoryField.background = EDITOR
+        singleFileWorkingDirectoryField.foreground = TEXT
+        singleFileWorkingDirectoryField.caretColor = TEXT
+        singleFileWorkingDirectoryField.emptyText.text = CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY
         settingsGrid.isFocusable = true
         settingsGrid.background = PANEL
         settingsGrid.border = EmptyBorder(10, 0, 0, 0)
         settingsGrid.removeAll()
         settingsGrid.add(settingsSection("运行设置") {
             settingCheckBoxRow(singleFileModeEnabled)
+            settingRow("工作目录配置:", singleFileWorkingDirectoryControl())
             settingRow("Time Limits:", timeoutControl())
             settingRow("C++ 标准:", cppStandardCombo)
             compileOptionsField.preferredSize = Dimension(260, compileOptionsField.preferredSize.height)
@@ -526,6 +564,47 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun persistSingleFileWorkingDirectory() {
+        if (applyingTargetSettings || applyingWorkingDirectorySettings) return
+        val normalized = CphStateService.normalizeSingleFileWorkingDirectory(singleFileWorkingDirectoryField.text)
+        stateService.getState().singleFileWorkingDirectory = normalized
+        if (singleFileWorkingDirectoryField.text != normalized) {
+            SwingUtilities.invokeLater { setSingleFileWorkingDirectoryText(normalized) }
+        }
+        CphSingleFileModeService.getInstance(project).syncForCurrentFile(force = true)
+    }
+
+    private fun setSingleFileWorkingDirectoryText(value: String) {
+        applyingWorkingDirectorySettings = true
+        try {
+            singleFileWorkingDirectoryField.text = value
+        } finally {
+            applyingWorkingDirectorySettings = false
+        }
+    }
+
+    private fun chooseSingleFileWorkingDirectory() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
+            .withTitle("Choose Working Directory")
+        val selected = FileChooser.chooseFile(descriptor, project, null) ?: return
+        setSingleFileWorkingDirectoryText(displayWorkingDirectoryPath(selected.path))
+        persistSingleFileWorkingDirectory()
+    }
+
+    private fun displayWorkingDirectoryPath(path: String): String {
+        val selectedPath = path.replace('\\', '/').removeSuffix("/")
+        val projectPath = project.basePath?.replace('\\', '/')?.removeSuffix("/")
+        if (!projectPath.isNullOrBlank()) {
+            if (selectedPath == projectPath) return "."
+            val prefix = "$projectPath/"
+            if (selectedPath.startsWith(prefix)) {
+                val relative = selectedPath.removePrefix(prefix).ifBlank { "." }
+                return if (relative == ".") relative else "$relative/"
+            }
+        }
+        return File(path).path
+    }
+
     private fun refreshShortcutSettings() {
         applyingShortcutSettings = true
         try {
@@ -604,6 +683,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun singleFileWorkingDirectoryControl(): JComponent {
+        return JPanel(BorderLayout(6, 0)).also {
+            it.background = SURFACE
+            it.isOpaque = false
+            it.add(singleFileWorkingDirectoryField, BorderLayout.CENTER)
+            it.add(singleFileWorkingDirectoryChooserButton, BorderLayout.EAST)
+        }
+    }
+
     private fun timeoutControl(): JComponent {
         return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
             it.background = SURFACE
@@ -617,6 +705,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun buildBody(): JComponent {
         val uiState = stateService.getState().ui
         outputContainer.background = PANEL
+        outputContainer.isOpaque = true
         rebuildOutputLayout()
 
         return JPanel(BorderLayout()).also { editorPanel ->
@@ -693,11 +782,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return JSplitPane(orientation, first, second).also {
             it.setUI(darkSplitPaneUi())
             it.background = PANEL
+            it.isOpaque = true
             it.border = null
             it.dividerSize = OUTPUT_DIVIDER_SIZE
             it.isContinuousLayout = true
             it.isOneTouchExpandable = false
             it.minimumSize = Dimension(0, 0)
+            first.background = PANEL
+            first.isOpaque = true
+            second.background = PANEL
+            second.isOpaque = true
         }
     }
 
@@ -707,7 +801,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 return object : BasicSplitPaneDivider(this) {
                     init {
                         background = PANEL
-                        border = null
+                        border = EmptyBorder(0, 0, 0, 0)
                         setOpaque(true)
                     }
 
@@ -741,6 +835,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun labeledOutput(label: String, component: JComponent): JComponent {
         return JPanel(BorderLayout(0, 6)).also {
             it.background = PANEL
+            it.isOpaque = true
             it.border = EmptyBorder(8, 0, 8, 0)
             it.minimumSize = Dimension(0, 0)
             it.add(JBLabel(label).also { title -> title.foreground = TEXT }, BorderLayout.NORTH)
@@ -772,8 +867,30 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.preferredSize = Dimension(320, height)
             it.minimumSize = Dimension(100, CPH_MIN_EDITOR_HEIGHT)
             it.border = MatteBorder(1, 1, 1, 1, BORDER)
+            it.background = EDITOR
+            it.isOpaque = true
             it.viewport.background = EDITOR
-            it.setRowHeaderView(LineNumberGutter(area))
+            it.viewport.isOpaque = true
+            it.horizontalScrollBar.background = EDITOR
+            it.verticalScrollBar.background = EDITOR
+            it.horizontalScrollBar.border = BorderFactory.createEmptyBorder()
+            it.verticalScrollBar.border = BorderFactory.createEmptyBorder()
+            val gutter = LineNumberGutter(area)
+            it.setRowHeaderView(gutter)
+            it.rowHeader?.background = EDITOR
+            it.rowHeader?.isOpaque = true
+            it.setCorner(ScrollPaneConstants.UPPER_LEFT_CORNER, darkCorner())
+            it.setCorner(ScrollPaneConstants.LOWER_LEFT_CORNER, darkCorner())
+            it.setCorner(ScrollPaneConstants.UPPER_RIGHT_CORNER, darkCorner())
+            it.setCorner(ScrollPaneConstants.LOWER_RIGHT_CORNER, darkCorner())
+        }
+    }
+
+    private fun darkCorner(): JComponent {
+        return JPanel().also {
+            it.background = EDITOR
+            it.isOpaque = true
+            it.border = BorderFactory.createEmptyBorder()
         }
     }
 
@@ -928,6 +1045,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         try {
             timeoutSpinner.value = currentTargetCases.timeoutMillis.toInt()
             singleFileModeEnabled.isSelected = stateService.getState().singleFileModeEnabled
+            setSingleFileWorkingDirectoryText(stateService.getState().singleFileWorkingDirectory)
             editorFontSizeSpinner.value = stateService.getState().ui.editorFontSize
             noExpectedModeEnabled.isSelected = stateService.getState().ui.noExpectedModeEnabled
             ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
@@ -1046,8 +1164,43 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             return
         }
 
+        if (identity.kind == CphTargetKind.CPP_FILE) {
+            prepareAndDebugCppFileCase(identity, currentTargetCases, testCase)
+            return
+        }
+        launchDebugCase(identity, testCase)
+    }
+
+    private fun prepareAndDebugCppFileCase(
+        identity: CphTargetIdentity,
+        targetCases: CphTargetCases,
+        testCase: CphTestCase,
+    ) {
+        StatusBar.Info.set("CPH Debug: preparing ${testCase.name}", project)
+        object : Task.Backgroundable(project, "Preparing CPH debug", false) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Preparing ${testCase.name}"
+                val syncError = compileSettingsSynchronizer.sync(
+                    identity,
+                    targetCases,
+                    stateService.getState().compileSettings.toCompileSettings(),
+                    waitForCppFileTarget = true,
+                ).error
+                ApplicationManager.getApplication().invokeLater {
+                    if (syncError != null) {
+                        reportDebugError("Failed to prepare C/C++ File target: $syncError")
+                    } else {
+                        launchDebugCase(identity, testCase)
+                    }
+                }
+            }
+        }.queue()
+    }
+
+    private fun launchDebugCase(identity: CphTargetIdentity, testCase: CphTestCase) {
+        StatusBar.Info.set("CPH Debug: launching ${testCase.name}", project)
         try {
-            CphRunner(project).debugCMakeCase(identity, testCase)
+            CphRunner(project).debugCase(identity, testCase)
         } catch (e: Throwable) {
             reportDebugError(e.message ?: e.javaClass.simpleName)
         }
@@ -1330,7 +1483,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runSelectedCaseButton.foreground = if (runSelectedCaseButton.isEnabled) GOOD else MUTED
         debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
             currentIdentity.runnable &&
-            currentIdentity.kind == CphTargetKind.CMAKE_APP
+            (currentIdentity.kind == CphTargetKind.CMAKE_APP || currentIdentity.kind == CphTargetKind.CPP_FILE)
         debugSelectedCaseButton.foreground = if (debugSelectedCaseButton.isEnabled) RUN else MUTED
         runAllButton.isEnabled = currentTargetCases.cases.any { it.enabled } && runnable
         runAllButton.foreground = if (runAllButton.isEnabled) GOOD else MUTED
@@ -1343,6 +1496,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         outputSplitEnabled.isEnabled = !running && !stateService.getState().ui.noExpectedModeEnabled
         cppStandardCombo.isEnabled = !running
         compileOptionsField.isEnabled = !running
+        singleFileWorkingDirectoryField.isEnabled = !running
+        singleFileWorkingDirectoryChooserButton.isEnabled = !running
     }
 
     private inner class CaseTab(
@@ -1504,6 +1659,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private class LineNumberGutter(private val area: JBTextArea) : JComponent(), DocumentListener {
         init {
+            isOpaque = true
             font = area.font
             foreground = MUTED
             background = EDITOR
@@ -1519,15 +1675,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
+            val clip = g.clipBounds ?: Rectangle(0, 0, width, height)
             g.color = background
-            g.fillRect(0, g.clipBounds.y, width, g.clipBounds.height)
+            g.fillRect(0, clip.y, width, clip.height)
             g.color = foreground
             g.font = font
 
             val metrics = area.getFontMetrics(area.font)
             val lineHeight = metrics.height.coerceAtLeast(1)
             val topInset = area.insets.top
-            val clip = g.clipBounds
             val firstLine = ((clip.y - topInset).coerceAtLeast(0) / lineHeight).coerceAtMost(area.lineCount - 1)
             val lastLine = ((clip.y + clip.height - topInset).coerceAtLeast(0) / lineHeight)
                 .coerceAtMost(area.lineCount - 1)

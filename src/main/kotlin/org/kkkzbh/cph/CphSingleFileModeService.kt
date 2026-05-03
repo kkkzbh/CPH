@@ -15,6 +15,7 @@ import org.kkkzbh.cph.server.CphCppFileRunConfigurationFactory
 internal data class CphSingleFileModeRequest(
     val path: String,
     val displayName: String,
+    val workingDirectory: String,
 )
 
 internal object CphSingleFileModePolicy {
@@ -25,6 +26,7 @@ internal object CphSingleFileModePolicy {
         fileName: String?,
         inProject: Boolean,
         lastObservedPath: String?,
+        workingDirectory: String?,
         force: Boolean = false,
     ): CphSingleFileModeRequest? {
         if (!enabled || path.isNullOrBlank()) return null
@@ -33,6 +35,7 @@ internal object CphSingleFileModePolicy {
         return CphSingleFileModeRequest(
             path = path,
             displayName = fileName?.takeIf { it.isNotBlank() } ?: path.substringAfterLast('/'),
+            workingDirectory = CphStateService.normalizeSingleFileWorkingDirectory(workingDirectory),
         )
     }
 }
@@ -72,13 +75,14 @@ internal class CphSingleFileModeService(private val project: Project) {
             fileName = file?.name,
             inProject = file?.let(::isProjectFile) == true,
             lastObservedPath = previousPath,
+            workingDirectory = stateService.getState().singleFileWorkingDirectory,
             force = force,
         ) ?: return
 
         runCatching {
             val runManager = RunManager.getInstance(project)
             val settings = CphCppFileRunConfigurationFactory
-                .findOrCreate(project, file ?: return, request.displayName)
+                .findOrCreate(project, file ?: return, request.displayName, request.workingDirectory)
                 .settings
             if (runManager.selectedConfiguration !== settings) {
                 applyingSelection = true

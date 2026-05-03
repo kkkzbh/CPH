@@ -7,8 +7,10 @@ import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import org.kkkzbh.cph.CphStateService
 import org.kkkzbh.cph.CphTargetKind
 import org.kkkzbh.cph.CphTargetResolver
+import java.io.File
 
 internal data class CphRunConfigurationCreation(
     val settings: RunnerAndConfigurationSettings,
@@ -25,14 +27,22 @@ internal object CphCppFileRunConfigurationFactory {
         project: Project,
         sourceFile: VirtualFile,
         displayName: String,
+        workingDirectory: String? = null,
     ): CphRunConfigurationCreation {
         val runManager = RunManager.getInstance(project)
         val sourcePath = sourceFile.path
+        val resolvedWorkingDirectory = workingDirectory?.let { resolveWorkingDirectory(project, it) }
+        resolvedWorkingDirectory?.let(::ensureWorkingDirectoryExists)
 
         runManager.allSettings.firstOrNull { settings ->
             isCppFileRunConfiguration(settings) &&
                 runCatching { sourcePathsEqual(readSourceFile(settings.configuration), sourcePath) }.getOrDefault(false)
-        }?.let { return CphRunConfigurationCreation(it, createdNew = false) }
+        }?.let {
+            if (resolvedWorkingDirectory != null && applyWorkingDirectory(it.configuration, resolvedWorkingDirectory)) {
+                notifyRunConfigurationChanged(runManager, it)
+            }
+            return CphRunConfigurationCreation(it, createdNew = false)
+        }
 
         val type = findCppFileConfigurationType()
             ?: error("CLion C/C++ File configuration type not found.")
@@ -44,6 +54,9 @@ internal object CphCppFileRunConfigurationFactory {
         val newSettings = runManager.createConfiguration(uniqueName, factory)
 
         applySourceFile(newSettings.configuration, sourcePath)
+        if (resolvedWorkingDirectory != null) {
+            applyWorkingDirectory(newSettings.configuration, resolvedWorkingDirectory)
+        }
 
         runManager.addConfiguration(newSettings)
         return CphRunConfigurationCreation(newSettings, createdNew = true)
@@ -95,6 +108,33 @@ internal object CphCppFileRunConfigurationFactory {
         return SETTERS.any { setter -> invokeStringSetter(options, setter, sourcePath) }
     }
 
+    internal fun applyWorkingDirectory(configuration: Any, workingDirectory: String): Boolean {
+        val normalized = CphStateService.normalizeSingleFileWorkingDirectory(workingDirectory)
+        if (normalizeSourcePath(readWorkingDirectory(configuration)) == normalizeSourcePath(normalized)) return false
+        val applied = trySetWorkingDirectoryOnObject(configuration, normalized) ||
+            trySetWorkingDirectoryOnOptions(configuration, normalized)
+        if (!applied) {
+            logger.warn("Could not set working directory on CppFileRunConfiguration; class=${configuration.javaClass.name}")
+            error("Cannot set working directory on CLion C/C++ File run configuration.")
+        }
+        return true
+    }
+
+    private fun trySetWorkingDirectoryOnObject(target: Any, workingDirectory: String): Boolean {
+        return WORKING_DIRECTORY_SETTERS.any { setter ->
+            invokeStringSetter(target, setter, workingDirectory)
+        }
+    }
+
+    private fun trySetWorkingDirectoryOnOptions(configuration: Any, workingDirectory: String): Boolean {
+        val options = runCatching {
+            configuration.javaClass.methods.firstOrNull {
+                it.name == "getOptions" && it.parameterCount == 0
+            }?.invoke(configuration)
+        }.getOrNull() ?: return false
+        return WORKING_DIRECTORY_SETTERS.any { setter -> invokeStringSetter(options, setter, workingDirectory) }
+    }
+
     private fun invokeStringSetter(target: Any, methodName: String, value: String): Boolean {
         val method = target.javaClass.methods.firstOrNull {
             it.name == methodName &&
@@ -109,6 +149,19 @@ internal object CphCppFileRunConfigurationFactory {
 
     internal fun readSourceFile(configuration: Any): String? {
         for (getter in GETTERS) {
+            invokeNoArgString(configuration, getter)?.let { return it }
+            val options = runCatching {
+                configuration.javaClass.methods.firstOrNull {
+                    it.name == "getOptions" && it.parameterCount == 0
+                }?.invoke(configuration)
+            }.getOrNull() ?: continue
+            invokeNoArgString(options, getter)?.let { return it }
+        }
+        return null
+    }
+
+    internal fun readWorkingDirectory(configuration: Any): String? {
+        for (getter in WORKING_DIRECTORY_GETTERS) {
             invokeNoArgString(configuration, getter)?.let { return it }
             val options = runCatching {
                 configuration.javaClass.methods.firstOrNull {
@@ -155,6 +208,43 @@ internal object CphCppFileRunConfigurationFactory {
         return "$base ($i)"
     }
 
+    private fun resolveWorkingDirectory(project: Project, workingDirectory: String): String {
+        val normalized = CphStateService.normalizeSingleFileWorkingDirectory(workingDirectory)
+        val file = File(normalized)
+        if (file.isAbsolute) return file.path
+        val basePath = project.basePath?.takeIf { it.isNotBlank() } ?: return normalized
+        return File(basePath, normalized).path
+    }
+
+    internal fun ensureWorkingDirectoryExists(workingDirectory: String) {
+        val directory = File(workingDirectory)
+        if (directory.exists()) {
+            if (!directory.isDirectory) {
+                error("CPH working directory path exists but is not a directory: $workingDirectory")
+            }
+            return
+        }
+        if (!directory.mkdirs() && !directory.isDirectory) {
+            error("Cannot create CPH working directory: $workingDirectory")
+        }
+    }
+
+    private fun notifyRunConfigurationChanged(
+        runManager: RunManager,
+        settings: RunnerAndConfigurationSettings,
+    ) {
+        runCatching {
+            val fireChanged = runManager.javaClass.methods.firstOrNull {
+                it.name == "fireRunConfigurationChanged" &&
+                    it.parameterCount == 1 &&
+                    it.parameterTypes[0].isAssignableFrom(settings.javaClass)
+            } ?: return
+            fireChanged.invoke(runManager, settings)
+        }.onFailure {
+            logger.warn("Could not notify CLion that the C/C++ File configuration changed.", it)
+        }
+    }
+
     private fun isCppFileRunConfiguration(settings: RunnerAndConfigurationSettings): Boolean {
         val configuration = settings.configuration
         if (runCatching {
@@ -172,4 +262,6 @@ internal object CphCppFileRunConfigurationFactory {
 
     private val SETTERS = listOf("setSourceFile", "setFilePath", "setSourcePath")
     private val GETTERS = listOf("getSourceFile", "getFilePath", "getSourcePath")
+    private val WORKING_DIRECTORY_SETTERS = listOf("setWorkingDirectory", "setWorkDirectory", "setWorkingDir")
+    private val WORKING_DIRECTORY_GETTERS = listOf("getWorkingDirectory", "getWorkDirectory", "getWorkingDir")
 }

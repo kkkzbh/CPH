@@ -60,18 +60,18 @@ class CphRunner(private val project: Project) {
         }
     }
 
-    fun debugCMakeCase(identity: CphTargetIdentity, testCase: CphTestCase) {
+    fun debugCase(identity: CphTargetIdentity, testCase: CphTestCase) {
         val settings = identity.settings
             ?: throw ExecutionException(identity.message)
         if (!identity.runnable) {
             throw ExecutionException(identity.message)
         }
-        if (identity.kind != CphTargetKind.CMAKE_APP) {
-            throw ExecutionException("CPH Debug supports CLion CMake Application configurations.")
+        if (identity.kind != CphTargetKind.CMAKE_APP && identity.kind != CphTargetKind.CPP_FILE) {
+            throw ExecutionException("CPH Debug supports CLion CMake Application and C/C++ File configurations.")
         }
 
         val debugSettings = settings.createFactory().create()
-        debugSettings.name = "CPH Debug: ${settings.name} / ${testCase.name}"
+        debugSettings.name = debugConfigurationName(identity.kind, settings.name, testCase.name)
         debugSettings.setTemporary(true)
 
         val inputFile = Files.createTempFile("cph-debug-", ".in").toFile()
@@ -722,6 +722,14 @@ class CphRunner(private val project: Project) {
                 it.name == "getRunFileAndEnvironment" && it.parameterCount == 0
             }
             return canResolveRunFile && findMethodInHierarchy(candidate.javaClass, "createCommandLine", 5) != null
+        }
+
+        internal fun debugConfigurationName(kind: CphTargetKind, settingsName: String, caseName: String): String {
+            return if (kind == CphTargetKind.CPP_FILE) {
+                settingsName
+            } else {
+                "CPH Debug: $settingsName / $caseName"
+            }
         }
 
         private fun findMethodInHierarchy(type: Class<*>, name: String, parameterCount: Int): Method? {

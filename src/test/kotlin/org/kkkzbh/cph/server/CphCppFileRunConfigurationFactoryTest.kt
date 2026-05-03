@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class CphCppFileRunConfigurationFactoryTest {
     @Test
@@ -20,6 +21,45 @@ class CphCppFileRunConfigurationFactoryTest {
             "/project/main.cpp",
             CphCppFileRunConfigurationFactory.readSourceFile(ConfigurationWithOptions(OptionsWithSourcePath("/project/main.cpp"))),
         )
+    }
+
+    @Test
+    fun readsWorkingDirectoryFromConfigurationGetter() {
+        assertEquals(
+            "/project/.cph",
+            CphCppFileRunConfigurationFactory.readWorkingDirectory(ConfigurationWithWorkingDirectory("/project/.cph")),
+        )
+    }
+
+    @Test
+    fun appliesWorkingDirectoryThroughConfigurationSetter() {
+        val configuration = ConfigurationWithWorkingDirectory("")
+
+        assertTrue(CphCppFileRunConfigurationFactory.applyWorkingDirectory(configuration, "/project/.cph"))
+        assertEquals("/project/.cph", configuration.getWorkingDirectory())
+        assertFalse(CphCppFileRunConfigurationFactory.applyWorkingDirectory(configuration, "/project/.cph"))
+    }
+
+    @Test
+    fun appliesWorkingDirectoryThroughOptionsSetter() {
+        val options = OptionsWithWorkingDirectory("")
+
+        assertTrue(CphCppFileRunConfigurationFactory.applyWorkingDirectory(ConfigurationWithOptions(options), "/project/.cph"))
+        assertEquals("/project/.cph", options.getWorkingDirectory())
+    }
+
+    @Test
+    fun ensureWorkingDirectoryExistsCreatesMissingDirectory() {
+        val root = Files.createTempDirectory("cph-working-dir-test").toFile()
+        try {
+            val nested = root.resolve(".cph")
+
+            CphCppFileRunConfigurationFactory.ensureWorkingDirectoryExists(nested.path)
+
+            assertTrue(nested.isDirectory)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test
@@ -57,5 +97,25 @@ class CphCppFileRunConfigurationFactoryTest {
     private class OptionsWithSourcePath(private val sourcePath: String) {
         @Suppress("unused")
         fun getSourcePath(): String = sourcePath
+    }
+
+    private class ConfigurationWithWorkingDirectory(private var workingDirectory: String) {
+        @Suppress("unused")
+        fun getWorkingDirectory(): String = workingDirectory
+
+        @Suppress("unused")
+        fun setWorkingDirectory(value: String) {
+            workingDirectory = value
+        }
+    }
+
+    private class OptionsWithWorkingDirectory(private var workingDirectory: String) {
+        @Suppress("unused")
+        fun getWorkingDirectory(): String = workingDirectory
+
+        @Suppress("unused")
+        fun setWorkingDirectory(value: String) {
+            workingDirectory = value
+        }
     }
 }

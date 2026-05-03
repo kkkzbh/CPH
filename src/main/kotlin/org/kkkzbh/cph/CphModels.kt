@@ -19,6 +19,7 @@ internal const val CPH_MAX_EDITOR_HEIGHT = 800
 internal const val CPH_DEFAULT_EDITOR_FONT_SIZE = 13
 internal const val CPH_MIN_EDITOR_FONT_SIZE = 10
 internal const val CPH_MAX_EDITOR_FONT_SIZE = 28
+internal const val CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY = ".cph/"
 
 enum class CphVerdict {
     NOT_RUN,
@@ -84,6 +85,7 @@ data class CphState(
     var compileSettings: CphGlobalCompileSettings = CphGlobalCompileSettings(),
     var ui: CphUiState = CphUiState(),
     var singleFileModeEnabled: Boolean = true,
+    var singleFileWorkingDirectory: String = CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY,
 )
 
 internal interface CphCasesChangedListener {
@@ -113,6 +115,7 @@ class CphStateService : PersistentStateComponent<CphState> {
         state.ui.actualHeight = clampEditorHeight(state.ui.actualHeight)
         state.ui.outputSplitRatio = clampOutputSplitRatio(state.ui.outputSplitRatio)
         state.ui.editorFontSize = clampEditorFontSize(state.ui.editorFontSize)
+        state.singleFileWorkingDirectory = normalizeSingleFileWorkingDirectory(state.singleFileWorkingDirectory)
         this.state = state
     }
 
@@ -155,5 +158,9 @@ class CphStateService : PersistentStateComponent<CphState> {
         }
 
         fun clampEditorFontSize(size: Int): Int = size.coerceIn(CPH_MIN_EDITOR_FONT_SIZE, CPH_MAX_EDITOR_FONT_SIZE)
+
+        fun normalizeSingleFileWorkingDirectory(path: String?): String {
+            return path?.trim()?.takeIf { it.isNotBlank() } ?: CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY
+        }
     }
 }

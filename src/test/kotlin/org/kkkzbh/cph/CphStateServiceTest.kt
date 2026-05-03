@@ -167,6 +167,30 @@ class CphStateServiceTest {
     }
 
     @Test
+    fun loadStateDefaultsSingleFileWorkingDirectory() {
+        val service = CphStateService()
+        service.loadState(CphState())
+
+        assertEquals(".cph/", service.getState().singleFileWorkingDirectory)
+    }
+
+    @Test
+    fun loadStateNormalizesBlankSingleFileWorkingDirectory() {
+        val service = CphStateService()
+        service.loadState(CphState(singleFileWorkingDirectory = " "))
+
+        assertEquals(".cph/", service.getState().singleFileWorkingDirectory)
+    }
+
+    @Test
+    fun loadStatePreservesSingleFileWorkingDirectory() {
+        val service = CphStateService()
+        service.loadState(CphState(singleFileWorkingDirectory = "build/run/"))
+
+        assertEquals("build/run/", service.getState().singleFileWorkingDirectory)
+    }
+
+    @Test
     fun loadStatePreservesDisabledSingleFileMode() {
         val service = CphStateService()
         service.loadState(CphState(singleFileModeEnabled = false))

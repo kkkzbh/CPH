@@ -25,6 +25,22 @@ class CphRunnerTest {
         assertNull(CphRunner.cppFileLauncher(InvalidState()))
     }
 
+    @Test
+    fun cppFileDebugConfigurationKeepsOriginalName() {
+        assertSameName(
+            "main.cpp",
+            CphRunner.debugConfigurationName(CphTargetKind.CPP_FILE, "main.cpp", "Case 1"),
+        )
+    }
+
+    @Test
+    fun cmakeDebugConfigurationUsesCphDebugName() {
+        assertSameName(
+            "CPH Debug: app / Case 1",
+            CphRunner.debugConfigurationName(CphTargetKind.CMAKE_APP, "app", "Case 1"),
+        )
+    }
+
     private open class LauncherBase {
         @Suppress("unused")
         protected fun createCommandLine(
@@ -47,4 +63,8 @@ class CphRunnerTest {
     }
 
     private class InvalidState
+
+    private fun assertSameName(expected: String, actual: String) {
+        org.junit.Assert.assertEquals(expected, actual)
+    }
 }
