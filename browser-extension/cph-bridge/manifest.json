@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "CPH Target Runner",
+  "version": "1.0.0",
+  "description": "Browser companion for CPH Target Runner: submits Codeforces solutions with your existing browser login session.",
+  "permissions": ["tabs", "alarms", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "*://codeforces.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CPH Target Runner",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,203 @@
+(function (root) {
+  if (root.__cphPageSubmitInstalled) return;
+  root.__cphPageSubmitInstalled = true;
+
+  root.addEventListener("message", (event) => {
+    if (event.source !== root) return;
+    const msg = event.data;
+    if (!msg || msg.type !== "CPH_SUBMIT_JOB" || !msg.requestId || !msg.job) return;
+    run(msg.job)
+      .then((result) => {
+        root.postMessage({ type: "CPH_SUBMIT_RESULT", requestId: msg.requestId, ok: true, result }, "*");
+      })
+      .catch((err) => {
+        root.postMessage({
+          type: "CPH_SUBMIT_RESULT",
+          requestId: msg.requestId,
+          ok: false,
+          error: err && err.message ? err.message : String(err),
+        }, "*");
+      });
+  });
+
+  async function run(job) {
+    if (!/\/submit(?:[?#]|$)/.test(root.location.pathname + root.location.search)) {
+      throw new Error("CPH Target Runner must run on the Codeforces Submit Code page");
+    }
+    if (/\/enter\?back=|handleOrEmail|password/i.test(document.documentElement.innerHTML)) {
+      throw new Error("please log in to Codeforces in this browser");
+    }
+
+    const form = await waitForSubmitForm();
+    const handle = CphSubmitCore.extractHandle(document.documentElement.outerHTML) || await fetchCurrentHandle();
+    if (!handle) throw new Error("could not detect the logged-in Codeforces handle");
+
+    const beforeMaxId = await latestSubmissionId(handle);
+    const startedAtSeconds = Math.floor(Date.now() / 1000);
+    const debug = await fillSubmitCodeForm(form, job);
+    root.postMessage({ type: "CPH_SUBMIT_PROGRESS", debug }, "*");
+
+    const button = findSubmitButton(form);
+    setTimeout(() => submitForm(form, button), 30);
+    return {
+      handle,
+      beforeMaxId,
+      startedAtSeconds,
+      pageUrl: root.location.href,
+      debug,
+    };
+  }
+
+  function waitForSubmitForm() {
+    const existing = findSubmitCodeForm();
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const timer = setInterval(() => {
+        const form = findSubmitCodeForm();
+        if (form) {
+          clearInterval(timer);
+          resolve(form);
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error("could not find the Codeforces Submit Code form"));
+        }
+      }, 100);
+    });
+  }
+
+  function findSubmitCodeForm() {
+    return Array.from(document.forms).find((form) =>
+      form.querySelector('[name="programTypeId"]') &&
+      form.querySelector('[name="source"]') &&
+      (form.querySelector('[name="submittedProblemIndex"]') || form.querySelector('[name="submittedProblemCode"]'))
+    );
+  }
+
+  async function fillSubmitCodeForm(form, job) {
+    setField(form, "action", "submitSolutionFormSubmitted", false);
+    setProblem(form, job);
+    setProgramType(form, job.programTypeId);
+    setSource(form, job.source);
+    setField(form, "tabSize", getField(form, "tabSize") || "4", false);
+    if (form.elements.ftaa && root._ftaa) setField(form, "ftaa", root._ftaa, false);
+    if (form.elements.bfaa && root._bfaa) setField(form, "bfaa", root._bfaa, false);
+    if (form.elements._tta && root.Codeforces && typeof root.Codeforces.tta === "function") {
+      setField(form, "_tta", root.Codeforces.tta(), false);
+    }
+
+    await sleep(80);
+    const button = findSubmitButton(form);
+    if (!button) throw new Error("could not find the Submit Code button");
+    if (button.disabled) throw new Error("Codeforces Submit Code button is disabled after filling the form");
+
+    return [
+      `Submit Code page ready`,
+      `problem=${submittedProblemFieldValue(job)}`,
+      `lang=${getField(form, "programTypeId")}`,
+      `sourceBytes=${new Blob([job.source]).size}`,
+      `action=${form.getAttribute("action")}`,
+    ].join(", ");
+  }
+
+  function setProblem(form, job) {
+    const preferredName = submittedProblemFieldName(job.kind);
+    const field = form.elements[preferredName] || form.elements.submittedProblemIndex || form.elements.submittedProblemCode;
+    if (!field) throw new Error("Codeforces Submit Code page has no problem selector");
+    const value = submittedProblemFieldValue(job);
+    setFieldElement(field, value, true);
+    if (String(field.value).toLowerCase() !== String(value).toLowerCase()) {
+      throw new Error(`Codeforces Submit Code page does not list problem ${value}`);
+    }
+  }
+
+  function setProgramType(form, programTypeId) {
+    const field = form.elements.programTypeId;
+    if (!field) throw new Error("Codeforces Submit Code page has no language selector");
+    const value = String(programTypeId);
+    setFieldElement(field, value, true);
+    if (String(field.value) !== value) {
+      const options = Array.from(field.options || []).map((option) => `${option.value}:${option.textContent.trim()}`).join(", ");
+      throw new Error(`Codeforces Submit Code page does not list language id ${value}; available: ${options}`);
+    }
+  }
+
+  function setSource(form, source) {
+    const sourceText = source == null ? "" : String(source);
+    const textarea = form.elements.source || document.querySelector("#sourceCodeTextarea");
+    if (!textarea) throw new Error("Codeforces Submit Code page has no source field");
+    if (root.ace && document.querySelector("#editor")) {
+      const editor = root.ace.edit("editor");
+      editor.setValue(sourceText, -1);
+      editor.clearSelection();
+    }
+    setFieldElement(textarea, sourceText, true);
+    if (textarea.value !== sourceText) {
+      throw new Error("Codeforces source field did not accept the current editor text");
+    }
+  }
+
+  function setField(form, name, value, notify) {
+    const field = form.elements[name];
+    if (!field) return false;
+    setFieldElement(field, value, notify);
+    return true;
+  }
+
+  function setFieldElement(field, value, notify) {
+    field.value = value == null ? "" : String(value);
+    if (notify) {
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+
+  function getField(form, name) {
+    const field = form.elements[name];
+    return field ? field.value || "" : "";
+  }
+
+  function findSubmitButton(form) {
+    return form.querySelector("#singlePageSubmitButton, input[type='submit'], button[type='submit']");
+  }
+
+  function submitForm(form, button) {
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit(button || undefined);
+    } else if (button && typeof button.click === "function") {
+      button.click();
+    } else {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.submit();
+    }
+  }
+
+  function submittedProblemFieldName(kind) {
+    return kind === "PROBLEMSET" || kind === "ACMSGURU" ? "submittedProblemCode" : "submittedProblemIndex";
+  }
+
+  function submittedProblemFieldValue(job) {
+    if (job.kind === "PROBLEMSET") return `${job.contestId}${job.problemIndex}`;
+    if (job.kind === "ACMSGURU") return job.problemIndex;
+    return job.problemIndex;
+  }
+
+  async function fetchCurrentHandle() {
+    const home = await fetch("https://codeforces.com/", { credentials: "include", cache: "no-store" });
+    if (!home.ok) throw new Error(`Codeforces home failed: HTTP ${home.status}`);
+    return CphSubmitCore.extractHandle(await home.text());
+  }
+
+  async function latestSubmissionId(handle) {
+    const url = `https://codeforces.com/api/user.status?handle=${encodeURIComponent(handle)}&from=1&count=1`;
+    const resp = await fetch(url, { credentials: "include", cache: "no-store" });
+    if (!resp.ok) return 0;
+    const root = await resp.json();
+    const first = root && root.status === "OK" && Array.isArray(root.result) ? root.result[0] : null;
+    return first ? Number(first.id || 0) : 0;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+})(globalThis);

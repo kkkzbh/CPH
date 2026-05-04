@@ -17,6 +17,7 @@ val useLocalClion = providers.gradleProperty("useLocalClion")
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
 val marketplaceToken = providers.environmentVariable("JB_MARKETPLACE_TOKEN")
+val browserExtensionVersion = providers.gradleProperty("browserExtensionVersion").orElse("1.0.0")
 
 kotlin {
     jvmToolchain(21)
@@ -76,4 +77,19 @@ intellijPlatform {
 
 tasks.named("buildSearchableOptions").configure {
     enabled = false
+}
+
+val buildBrowserExtension by tasks.registering(Sync::class) {
+    from(layout.projectDirectory.dir("browser-extension/cph-bridge")) {
+        exclude("*.test.js")
+    }
+    into(layout.buildDirectory.dir("distributions/cph-target-runner-browser-${browserExtensionVersion.get()}"))
+}
+
+tasks.named("buildPlugin") {
+    dependsOn(buildBrowserExtension)
+}
+
+tasks.named("build") {
+    dependsOn(buildBrowserExtension)
 }

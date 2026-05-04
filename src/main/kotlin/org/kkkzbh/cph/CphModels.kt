@@ -74,6 +74,7 @@ data class CphUiState(
     var outputSplitRatio: Double = 0.5,
     var editorFontSize: Int = CPH_DEFAULT_EDITOR_FONT_SIZE,
     var noExpectedModeEnabled: Boolean = false,
+    var settingsReturnHintShown: Boolean = false,
 )
 
 data class CphState(

@@ -9,6 +9,9 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.IdeFocusManager
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import org.kkkzbh.cph.submit.CphActiveTabService
+import org.kkkzbh.cph.submit.CphSubmitBridgeUpdate
+import org.kkkzbh.cph.submit.CphSubmitOrchestrator
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -61,7 +64,7 @@ internal class CphCompetitiveCompanionServer : Disposable {
                 0,
             )
             s.createContext("/", ::handleExchange)
-            s.executor = Executors.newSingleThreadExecutor { runnable ->
+            s.executor = Executors.newCachedThreadPool { runnable ->
                 Thread(runnable, "CPH-CC-Server-${threadCounter.incrementAndGet()}").apply {
                     isDaemon = true
                 }
@@ -88,28 +91,23 @@ internal class CphCompetitiveCompanionServer : Disposable {
 
     private fun handleExchange(exchange: HttpExchange) {
         try {
+            if (exchange.requestMethod.equals("OPTIONS", ignoreCase = true)) {
+                respondPreflight(exchange)
+                return
+            }
             if (!exchange.requestMethod.equals("POST", ignoreCase = true)) {
                 respond(exchange, 405, "Method Not Allowed")
                 return
             }
-            val body = exchange.requestBody.use { it.readAllBytes() }
-                .toString(StandardCharsets.UTF_8)
-            val payload = CompetitiveCompanionParser.parse(body)
-            if (payload == null) {
-                logger.info("CPH server rejected payload: invalid JSON")
-                respond(exchange, 400, "Invalid Competitive Companion payload")
-                return
+            val rawPath = exchange.requestURI.path ?: "/"
+            val path = rawPath.trimEnd('/').ifBlank { "/" }
+            when (path) {
+                CPH_ACTIVE_TAB_PATH -> handleActiveTab(exchange)
+                CPH_SUBMIT_NOW_PATH -> handleSubmitNow(exchange)
+                CPH_SUBMIT_POLL_PATH -> handleSubmitPoll(exchange)
+                CPH_SUBMIT_UPDATE_PATH -> handleSubmitUpdate(exchange)
+                else -> handleCompetitiveCompanion(exchange)
             }
-            val project = resolveProject()
-            if (project == null) {
-                respond(exchange, 503, "No open project to receive payload")
-                return
-            }
-            ApplicationManager.getApplication().executeOnPooledThread {
-                runCatching { CphProblemImporter.getInstance(project).import(payload) }
-                    .onFailure { logger.warn("CPH import failed", it) }
-            }
-            respond(exchange, 200, "Accepted: ${payload.name}")
         } catch (e: Throwable) {
             logger.warn("CPH server handler exception", e)
             runCatching { respond(exchange, 500, e.message ?: "internal error") }
@@ -118,12 +116,142 @@ internal class CphCompetitiveCompanionServer : Disposable {
         }
     }
 
+    private fun handleCompetitiveCompanion(exchange: HttpExchange) {
+        val body = exchange.requestBody.use { it.readAllBytes() }
+            .toString(StandardCharsets.UTF_8)
+        val payload = CompetitiveCompanionParser.parse(body)
+        if (payload == null) {
+            logger.info("CPH server rejected payload: invalid JSON")
+            respond(exchange, 400, "Invalid Competitive Companion payload")
+            return
+        }
+        val project = resolveProject()
+        if (project == null) {
+            respond(exchange, 503, "No open project to receive payload")
+            return
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            runCatching { CphProblemImporter.getInstance(project).import(payload) }
+                .onFailure { logger.warn("CPH import failed", it) }
+        }
+        respond(exchange, 200, "Accepted: ${payload.name}")
+    }
+
+    private fun handleActiveTab(exchange: HttpExchange) {
+        val body = exchange.requestBody.use { it.readAllBytes() }
+            .toString(StandardCharsets.UTF_8)
+        val parsed = CphActiveTabPayload.parse(body)
+        if (parsed == null) {
+            respond(exchange, 400, "Invalid active-tab payload")
+            return
+        }
+        CphActiveTabService.getInstance().update(parsed.url, parsed.title)
+        respond(exchange, 200, "ok")
+    }
+
+    private fun handleSubmitNow(exchange: HttpExchange) {
+        val body = exchange.requestBody.use { it.readAllBytes() }
+            .toString(StandardCharsets.UTF_8)
+        val parsed = CphActiveTabPayload.parse(body)
+        if (parsed != null) {
+            CphActiveTabService.getInstance().update(parsed.url, parsed.title)
+        }
+        val project = resolveProject()
+        if (project == null) {
+            respond(exchange, 503, "No open project")
+            return
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            runCatching { CphSubmitOrchestrator.getInstance(project).submit() }
+                .onFailure { logger.warn("CPH submit-now failed", it) }
+        }
+        respond(exchange, 202, "submitting")
+    }
+
+    private fun handleSubmitPoll(exchange: HttpExchange) {
+        val body = exchange.requestBody.use { it.readAllBytes() }
+            .toString(StandardCharsets.UTF_8)
+        val parsed = CphActiveTabPayload.parse(body)
+        if (parsed == null) {
+            respond(exchange, 400, "Invalid submit-poll payload")
+            return
+        }
+        CphActiveTabService.getInstance().update(parsed.url, parsed.title)
+        val project = resolveProject()
+        if (project == null) {
+            respondNoContent(exchange)
+            return
+        }
+        val orchestrator = CphSubmitOrchestrator.getInstance(project)
+        val deadline = System.currentTimeMillis() + SUBMIT_POLL_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val tab = CphActiveTabService.getInstance().lastEver()
+            val job = tab?.let { orchestrator.pollSubmitJob(it) }
+            if (job != null) {
+                respondJson(exchange, 200, job.toJson())
+                return
+            }
+            Thread.sleep(SUBMIT_POLL_INTERVAL_MS)
+        }
+        respondNoContent(exchange)
+    }
+
+    private fun handleSubmitUpdate(exchange: HttpExchange) {
+        val body = exchange.requestBody.use { it.readAllBytes() }
+            .toString(StandardCharsets.UTF_8)
+        val update = CphSubmitBridgeUpdate.parse(body)
+        if (update == null) {
+            respond(exchange, 400, "Invalid submit-update payload")
+            return
+        }
+        val project = resolveProject()
+        if (project == null) {
+            respond(exchange, 503, "No open project")
+            return
+        }
+        val accepted = CphSubmitOrchestrator.getInstance(project).applyBridgeUpdate(update)
+        if (accepted) {
+            respond(exchange, 200, "ok")
+        } else {
+            respond(exchange, 409, "Unknown or stale submit job")
+        }
+    }
+
     @Throws(IOException::class)
     private fun respond(exchange: HttpExchange, status: Int, message: String) {
         val bytes = message.toByteArray(StandardCharsets.UTF_8)
         exchange.responseHeaders.set("Content-Type", "text/plain; charset=UTF-8")
+        addCorsHeaders(exchange)
         exchange.sendResponseHeaders(status, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    @Throws(IOException::class)
+    private fun respondJson(exchange: HttpExchange, status: Int, json: String) {
+        val bytes = json.toByteArray(StandardCharsets.UTF_8)
+        exchange.responseHeaders.set("Content-Type", "application/json; charset=UTF-8")
+        addCorsHeaders(exchange)
+        exchange.sendResponseHeaders(status, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+    }
+
+    @Throws(IOException::class)
+    private fun respondNoContent(exchange: HttpExchange) {
+        addCorsHeaders(exchange)
+        exchange.sendResponseHeaders(204, -1)
+    }
+
+    @Throws(IOException::class)
+    private fun respondPreflight(exchange: HttpExchange) {
+        addCorsHeaders(exchange)
+        exchange.sendResponseHeaders(204, -1)
+    }
+
+    private fun addCorsHeaders(exchange: HttpExchange) {
+        exchange.responseHeaders.set("Access-Control-Allow-Origin", "*")
+        exchange.responseHeaders.set("Access-Control-Allow-Methods", "POST, OPTIONS")
+        exchange.responseHeaders.set("Access-Control-Allow-Headers", "Content-Type")
+        exchange.responseHeaders.set("Access-Control-Allow-Private-Network", "true")
     }
 
     private fun resolveProject(): Project? {
@@ -142,6 +270,12 @@ internal class CphCompetitiveCompanionServer : Disposable {
 
     companion object {
         private val threadCounter = AtomicLong()
+        const val CPH_ACTIVE_TAB_PATH = "/cph/active-tab"
+        const val CPH_SUBMIT_NOW_PATH = "/cph/submit-now"
+        const val CPH_SUBMIT_POLL_PATH = "/cph/submit/poll"
+        const val CPH_SUBMIT_UPDATE_PATH = "/cph/submit/update"
+        private const val SUBMIT_POLL_TIMEOUT_MS = 20_000L
+        private const val SUBMIT_POLL_INTERVAL_MS = 300L
 
         fun getInstance(): CphCompetitiveCompanionServer =
             ApplicationManager.getApplication().getService(CphCompetitiveCompanionServer::class.java)

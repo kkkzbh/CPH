@@ -34,15 +34,28 @@
         <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphImportSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphCompetitiveCompanionServer" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.submit.CphActiveTabService" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.submit.CphSubmitSettings" />
+        <projectService serviceImplementation="org.kkkzbh.cph.submit.CphSubmitOrchestrator" />
         <applicationConfigurable parentId="tools"
                                  id="org.kkkzbh.cph.settings"
                                  displayName="CPH 竞赛伴侣"
                                  instance="org.kkkzbh.cph.server.CphImportSettingsConfigurable" />
         <postStartupActivity implementation="org.kkkzbh.cph.server.CphCompetitiveCompanionStarter" />
         <notificationGroup id="CPH Target Runner" displayType="BALLOON" />
+        <notificationGroup id="CPH Submit" displayType="BALLOON" />
         <toolWindow id="CPH"
                     anchor="right"
                     factoryClass="org.kkkzbh.cph.CphToolWindowFactory"
                     canCloseContents="false" />
     </extensions>
+
+    <actions>
+        <action id="cph.submit"
+                class="org.kkkzbh.cph.submit.CphSubmitAction"
+                text="CPH: Submit Current File to Codeforces"
+                description="Submit the current editor file to the Codeforces problem currently open in your browser tab.">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt ENTER"/>
+        </action>
+    </actions>
 </idea-plugin>

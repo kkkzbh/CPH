@@ -19,10 +19,19 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.StatusBar
+import com.intellij.ide.BrowserUtil
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
+import org.kkkzbh.cph.submit.CphActiveTab
+import org.kkkzbh.cph.submit.CphActiveTabListener
+import org.kkkzbh.cph.submit.CphActiveTabService
+import org.kkkzbh.cph.submit.CphSubmissionPhase
+import org.kkkzbh.cph.submit.CphSubmissionStatus
+import org.kkkzbh.cph.submit.CphSubmissionStatusListener
+import org.kkkzbh.cph.submit.CphSubmitContextResolver
+import org.kkkzbh.cph.submit.CphSubmitOrchestrator
 import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
@@ -60,10 +69,13 @@ import javax.swing.border.EmptyBorder
 import javax.swing.border.MatteBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.event.ChangeListener
 import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
 import javax.swing.text.Highlighter
 import javax.swing.text.JTextComponent
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
@@ -185,16 +197,35 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var applyingTargetSettings = false
     private var applyingShortcutSettings = false
     private var applyingWorkingDirectorySettings = false
+    private var activeRunButton: ActiveRunButton? = null
+    private var runSpinnerIndex = 0
 
     private val compileSettingsSynchronizer = CphCompileSettingsSynchronizer(project)
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
     private val caseTabComponents = linkedMapOf<String, CaseTab>()
 
     private val settingsButton = JButton("⚙")
-    private val runAllButton = JButton("▷")
+    private val runAllButton = JButton(RUN_ALL_BUTTON_TEXT)
+    private val submitButton = JButton("📤")
+    private val verdictLabel = JBLabel("")
+    private var verdictPageUrl: String? = null
+    private var submitSpinnerIndex = 0
+    private val submitSpinnerTimer = Timer(120) {
+        submitButton.text = SUBMIT_SPINNER_FRAMES[submitSpinnerIndex % SUBMIT_SPINNER_FRAMES.size]
+        submitSpinnerIndex++
+    }
+    private val hideSubmissionStatusTimer = Timer(SUBMISSION_STATUS_VISIBLE_MILLIS) {
+        hideSubmissionStatus()
+    }.also {
+        it.isRepeats = false
+    }
     private val resetCasesButton = JButton("↺")
-    private val runSelectedCaseButton = JButton("▷ Run")
+    private val runSelectedCaseButton = JButton(RUN_SELECTED_BUTTON_TEXT)
     private val debugSelectedCaseButton = JButton("Debug")
+    private val runSpinnerTimer = Timer(140) {
+        updateRunSpinnerText()
+        refreshRunActionButtons()
+    }
     private val singleFileModeEnabled = JCheckBox("纯单文件模式")
     private val ignoreTrailingWhitespace = JCheckBox("忽略行尾空格和多余换行")
     private val outputSplitEnabled = JCheckBox("双栏显示 Actual / Expected")
@@ -230,8 +261,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private val tabStrip = JPanel()
     private val tabScrollPane = JBScrollPane(tabStrip)
+    private val submissionStatusPanel = JPanel(BorderLayout())
     private val contentCards = JPanel(CardLayout())
     private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
+    private val settingsReturnHintPanel = JPanel(BorderLayout())
     private val outputContainer = JPanel(BorderLayout())
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
@@ -256,10 +289,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureRunSelectedCaseButton()
         configureDebugSelectedCaseButton()
         configureSettingsButton()
+        configureSubmitButton()
+        configureVerdictLabel()
         configureWorkingDirectoryChooserButton()
 
         settingsButton.addActionListener { toggleSettingsPanel() }
         runAllButton.addActionListener { runAllCases() }
+        submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
         resetCasesButton.addActionListener { resetCases() }
         runSelectedCaseButton.addActionListener { runSelectedCase() }
         debugSelectedCaseButton.addActionListener { debugSelectedCase() }
@@ -334,11 +370,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         listOf(expectedArea, actualArea).forEach(::installDiffRefreshListener)
 
         installTargetRefreshListeners()
+        installSubmissionListeners()
         refreshTarget()
         refreshShortcutSettings()
+        refreshSubmitButtonTooltip()
     }
 
-    override fun dispose() = Unit
+    override fun dispose() {
+        stopRunSpinner()
+        submitSpinnerTimer.stop()
+        hideSubmissionStatusTimer.stop()
+    }
 
     internal fun triggerShortcut(action: CphShortcutAction) {
         when (action) {
@@ -349,26 +391,160 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun buildTop(): JComponent {
+        val top = JPanel()
+        top.layout = BoxLayout(top, BoxLayout.Y_AXIS)
+        top.background = PANEL
+
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
         toolbar.background = PANEL
         toolbar.add(runAllButton)
+        toolbar.add(submitButton)
         toolbar.add(resetCasesButton)
         toolbar.add(settingsButton)
-        return toolbar
+        toolbar.alignmentX = Component.LEFT_ALIGNMENT
+
+        submissionStatusPanel.background = SURFACE
+        submissionStatusPanel.border = CompoundBorder(
+            MatteBorder(1, 0, 1, 0, BORDER),
+            EmptyBorder(4, 8, 4, 8),
+        )
+        submissionStatusPanel.add(verdictLabel, BorderLayout.CENTER)
+        submissionStatusPanel.isVisible = false
+        submissionStatusPanel.maximumSize = Dimension(Int.MAX_VALUE, 28)
+        submissionStatusPanel.alignmentX = Component.LEFT_ALIGNMENT
+
+        top.add(toolbar)
+        top.add(submissionStatusPanel)
+        return top
+    }
+
+    private fun configureSubmitButton() {
+        submitButton.foreground = RUN
+        submitButton.background = PANEL
+        submitButton.isOpaque = false
+        submitButton.isContentAreaFilled = false
+        submitButton.isBorderPainted = false
+        submitButton.isFocusPainted = false
+        submitButton.border = EmptyBorder(2, 6, 2, 6)
+        submitButton.preferredSize = Dimension(34, 28)
+        submitButton.minimumSize = submitButton.preferredSize
+        submitButton.maximumSize = submitButton.preferredSize
+        submitButton.font = submitButton.font.deriveFont(Font.BOLD, submitButton.font.size2D + 2.0f)
+    }
+
+    private fun configureVerdictLabel() {
+        verdictLabel.foreground = MUTED
+        verdictLabel.font = verdictLabel.font.deriveFont(Font.PLAIN)
+        verdictLabel.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        verdictLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val url = verdictPageUrl ?: return
+                BrowserUtil.browse(url)
+            }
+        })
+    }
+
+    private fun installSubmissionListeners() {
+        val appConnection = ApplicationManager.getApplication().messageBus.connect(this)
+        appConnection.subscribe(CphSubmissionStatusListener.TOPIC, object : CphSubmissionStatusListener {
+            override fun submissionStatusChanged(status: CphSubmissionStatus) {
+                SwingUtilities.invokeLater { applySubmissionStatus(status) }
+            }
+        })
+        appConnection.subscribe(CphActiveTabListener.TOPIC, object : CphActiveTabListener {
+            override fun activeTabChanged(tab: CphActiveTab?) {
+                SwingUtilities.invokeLater { refreshSubmitButtonTooltip() }
+            }
+        })
+    }
+
+    private fun applySubmissionStatus(status: CphSubmissionStatus) {
+        if (status.phase == CphSubmissionPhase.IDLE) {
+            verdictPageUrl = null
+            hideSubmissionStatus()
+            setSubmitBusy(false)
+            return
+        }
+        status.pageUrl?.let { verdictPageUrl = it }
+        verdictLabel.text = status.text
+        verdictLabel.foreground = when (status.phase) {
+            CphSubmissionPhase.IDLE -> MUTED
+            CphSubmissionPhase.SUBMITTING,
+            CphSubmissionPhase.QUEUED,
+            CphSubmissionPhase.RUNNING -> RUN
+            CphSubmissionPhase.ACCEPTED -> GOOD
+            CphSubmissionPhase.REJECTED,
+            CphSubmissionPhase.ERROR -> BAD
+        }
+        verdictLabel.toolTipText = status.errorDetail
+            ?: status.pageUrl
+            ?: status.text.ifBlank { null }
+        verdictLabel.cursor = if (verdictPageUrl != null) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+        submissionStatusPanel.isVisible = true
+        submissionStatusPanel.revalidate()
+        submissionStatusPanel.repaint()
+
+        val busy = status.phase == CphSubmissionPhase.SUBMITTING ||
+            status.phase == CphSubmissionPhase.QUEUED ||
+            status.phase == CphSubmissionPhase.RUNNING
+        setSubmitBusy(busy)
+        if (busy) {
+            hideSubmissionStatusTimer.stop()
+        } else {
+            hideSubmissionStatusTimer.restart()
+        }
+    }
+
+    private fun setSubmitBusy(busy: Boolean) {
+        submitButton.isEnabled = !busy
+        if (busy) {
+            if (!submitSpinnerTimer.isRunning) {
+                submitSpinnerIndex = 0
+                submitSpinnerTimer.start()
+            }
+            return
+        }
+        submitSpinnerTimer.stop()
+        submitButton.text = "📤"
+    }
+
+    private fun hideSubmissionStatus() {
+        hideSubmissionStatusTimer.stop()
+        verdictLabel.text = ""
+        verdictLabel.toolTipText = null
+        submissionStatusPanel.isVisible = false
+        submissionStatusPanel.revalidate()
+        submissionStatusPanel.repaint()
+    }
+
+    private fun refreshSubmitButtonTooltip() {
+        val tab = CphActiveTabService.getInstance().current()
+        val ctx = tab?.let { CphSubmitContextResolver.resolve(it.url) }
+        submitButton.toolTipText = when {
+            ctx != null -> "Submit current file → ${ctx.displayId}"
+            tab != null -> "Active tab is not a Codeforces problem page"
+            else -> "No active Codeforces tab — install the CPH Target Runner browser extension"
+        }
     }
 
     private fun configureRunAllButton() {
-        runAllButton.foreground = GOOD
         runAllButton.background = PANEL
         runAllButton.isOpaque = false
         runAllButton.isContentAreaFilled = false
         runAllButton.isBorderPainted = false
         runAllButton.isFocusPainted = false
+        runAllButton.isRolloverEnabled = true
         runAllButton.border = EmptyBorder(2, 6, 2, 6)
         runAllButton.preferredSize = Dimension(34, 28)
         runAllButton.minimumSize = runAllButton.preferredSize
         runAllButton.maximumSize = runAllButton.preferredSize
         runAllButton.font = runAllButton.font.deriveFont(Font.BOLD, runAllButton.font.size2D + 2.0f)
+        runAllButton.model.addChangeListener(ChangeListener { refreshRunActionButtons() })
+        refreshToolbarRunAllButton()
     }
 
     private fun configureResetCasesButton() {
@@ -386,27 +562,63 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun configureRunSelectedCaseButton() {
-        runSelectedCaseButton.foreground = GOOD
-        runSelectedCaseButton.background = PANEL
-        runSelectedCaseButton.isOpaque = false
-        runSelectedCaseButton.isContentAreaFilled = false
-        runSelectedCaseButton.isBorderPainted = false
+        runSelectedCaseButton.isOpaque = true
+        runSelectedCaseButton.isContentAreaFilled = true
+        runSelectedCaseButton.isBorderPainted = true
         runSelectedCaseButton.isFocusPainted = false
-        runSelectedCaseButton.border = EmptyBorder(0, 8, 0, 0)
+        runSelectedCaseButton.isRolloverEnabled = true
+        runSelectedCaseButton.border = EmptyBorder(1, 6, 1, 6)
         runSelectedCaseButton.font = runSelectedCaseButton.font.deriveFont(Font.BOLD)
+        runSelectedCaseButton.model.addChangeListener(ChangeListener { refreshRunActionButtons() })
+        refreshRunActionButton(runSelectedCaseButton, GOOD, false)
     }
 
     private fun configureDebugSelectedCaseButton() {
         debugSelectedCaseButton.icon = AllIcons.Actions.StartDebugger
         debugSelectedCaseButton.iconTextGap = 4
-        debugSelectedCaseButton.foreground = RUN
-        debugSelectedCaseButton.background = PANEL
-        debugSelectedCaseButton.isOpaque = false
-        debugSelectedCaseButton.isContentAreaFilled = false
-        debugSelectedCaseButton.isBorderPainted = false
+        debugSelectedCaseButton.isOpaque = true
+        debugSelectedCaseButton.isContentAreaFilled = true
+        debugSelectedCaseButton.isBorderPainted = true
         debugSelectedCaseButton.isFocusPainted = false
-        debugSelectedCaseButton.border = EmptyBorder(0, 8, 0, 0)
+        debugSelectedCaseButton.isRolloverEnabled = true
+        debugSelectedCaseButton.border = EmptyBorder(1, 6, 1, 6)
         debugSelectedCaseButton.font = debugSelectedCaseButton.font.deriveFont(Font.BOLD)
+        debugSelectedCaseButton.model.addChangeListener(ChangeListener { refreshRunActionButtons() })
+        refreshRunActionButton(debugSelectedCaseButton, RUN, false)
+    }
+
+    private fun refreshRunActionButtons() {
+        refreshToolbarRunAllButton()
+        refreshRunActionButton(runSelectedCaseButton, GOOD, activeRunButton == ActiveRunButton.RUN_SELECTED)
+        refreshRunActionButton(debugSelectedCaseButton, RUN, false)
+    }
+
+    private fun refreshToolbarRunAllButton() {
+        runAllButton.foreground = if (runAllButton.isEnabled || activeRunButton == ActiveRunButton.RUN_ALL) GOOD else MUTED
+        runAllButton.background = PANEL
+        runAllButton.border = EmptyBorder(2, 6, 2, 6)
+        runAllButton.repaint()
+    }
+
+    private fun refreshRunActionButton(button: JButton, baseColor: Color, active: Boolean) {
+        val model = button.model
+        val pressed = model.isPressed && model.isArmed
+        val foreground = when {
+            active -> baseColor
+            button.isEnabled -> baseColor
+            else -> MUTED
+        }
+        val background = when {
+            active -> ACTION_BUTTON_HOVER
+            !button.isEnabled -> PANEL
+            pressed -> ACTION_BUTTON_PRESSED
+            model.isRollover -> ACTION_BUTTON_HOVER
+            else -> PANEL
+        }
+        button.foreground = foreground
+        button.background = background
+        button.border = EmptyBorder(2, 7, 2, 7)
+        button.repaint()
     }
 
     private fun configureSettingsButton() {
@@ -449,16 +661,30 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         tabStrip.background = PANEL
         tabScrollPane.border = MatteBorder(1, 0, 1, 0, BORDER)
         tabScrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        tabScrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS
-        tabScrollPane.preferredSize = Dimension(0, 76)
-        tabScrollPane.minimumSize = Dimension(0, 76)
+        tabScrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        tabScrollPane.preferredSize = Dimension(0, TAB_STRIP_BASE_HEIGHT)
+        tabScrollPane.minimumSize = Dimension(0, TAB_STRIP_BASE_HEIGHT)
         tabScrollPane.viewport.background = PANEL
+        tabScrollPane.horizontalScrollBar.addComponentListener(object : ComponentAdapter() {
+            override fun componentShown(e: ComponentEvent) = adjustTabScrollPaneHeight(true)
+            override fun componentHidden(e: ComponentEvent) = adjustTabScrollPaneHeight(false)
+        })
 
         return JPanel(BorderLayout()).also {
             it.background = PANEL
             it.add(tabScrollPane, BorderLayout.NORTH)
             it.add(buildBody(), BorderLayout.CENTER)
         }
+    }
+
+    private fun adjustTabScrollPaneHeight(scrollBarVisible: Boolean) {
+        val extra = if (scrollBarVisible) tabScrollPane.horizontalScrollBar.preferredSize.height else 0
+        val newHeight = TAB_STRIP_BASE_HEIGHT + extra
+        if (tabScrollPane.preferredSize.height == newHeight) return
+        tabScrollPane.preferredSize = Dimension(0, newHeight)
+        tabScrollPane.minimumSize = Dimension(0, newHeight)
+        tabScrollPane.parent?.revalidate()
+        tabScrollPane.parent?.repaint()
     }
 
     private fun buildSettingsView(): JComponent {
@@ -479,6 +705,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         settingsGrid.background = PANEL
         settingsGrid.border = EmptyBorder(10, 0, 0, 0)
         settingsGrid.removeAll()
+        settingsGrid.add(buildSettingsReturnHint())
         settingsGrid.add(settingsSection("运行设置") {
             settingCheckBoxRow(singleFileModeEnabled)
             settingRow("工作目录配置:", singleFileWorkingDirectoryControl())
@@ -515,9 +742,43 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun buildSettingsReturnHint(): JComponent {
+        settingsReturnHintPanel.removeAll()
+        settingsReturnHintPanel.background = SURFACE
+        settingsReturnHintPanel.border = CompoundBorder(
+            MatteBorder(1, 1, 1, 1, BORDER),
+            EmptyBorder(8, 10, 8, 10),
+        )
+        settingsReturnHintPanel.alignmentX = Component.LEFT_ALIGNMENT
+        settingsReturnHintPanel.isVisible = false
+        settingsReturnHintPanel.add(
+            JBLabel("提示：再次点击设置按钮可回到主界面").also {
+                it.foreground = TEXT
+            },
+            BorderLayout.CENTER,
+        )
+        val preferred = settingsReturnHintPanel.preferredSize
+        settingsReturnHintPanel.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
+        return settingsReturnHintPanel
+    }
+
     private fun toggleSettingsPanel() {
         settingsVisible = !settingsVisible
+        if (settingsVisible) {
+            showSettingsReturnHintOnce()
+        } else {
+            settingsReturnHintPanel.isVisible = false
+        }
         showActiveView()
+    }
+
+    private fun showSettingsReturnHintOnce() {
+        val uiState = stateService.getState().ui
+        val shouldShow = !uiState.settingsReturnHintShown
+        settingsReturnHintPanel.isVisible = shouldShow
+        if (shouldShow) {
+            uiState.settingsReturnHintShown = true
+        }
     }
 
     private fun showActiveView() {
@@ -836,7 +1097,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return JPanel(BorderLayout(0, 6)).also {
             it.background = PANEL
             it.isOpaque = true
-            it.border = EmptyBorder(8, 0, 8, 0)
+            it.border = EmptyBorder(0, 0, 0, 0)
             it.minimumSize = Dimension(0, 0)
             it.add(JBLabel(label).also { title -> title.foreground = TEXT }, BorderLayout.NORTH)
             it.add(component, BorderLayout.CENTER)
@@ -854,7 +1115,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun inputActions(): JComponent {
-        return JPanel(FlowLayout(FlowLayout.RIGHT, 10, 0)).also {
+        return JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).also {
             it.background = PANEL
             it.isOpaque = false
             it.add(debugSelectedCaseButton)
@@ -910,7 +1171,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
         init {
             background = PANEL
-            border = EmptyBorder(8, 0, 8, 0)
+            border = EmptyBorder(0, 0, 0, 0)
             alignmentX = Component.LEFT_ALIGNMENT
 
             titleRow.background = PANEL
@@ -1150,7 +1411,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun runSelectedCase() {
         flushSelectedCase()
         val testCase = selectedCase ?: return
-        runCases(listOf(testCase))
+        runCases(listOf(testCase), ActiveRunButton.RUN_SELECTED)
     }
 
     private fun debugSelectedCase() {
@@ -1208,10 +1469,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun runAllCases() {
         flushSelectedCase()
-        runCases(currentTargetCases.cases.filter { it.enabled })
+        runCases(currentTargetCases.cases.filter { it.enabled }, ActiveRunButton.RUN_ALL)
     }
 
-    private fun runCases(cases: List<CphTestCase>) {
+    private fun runCases(cases: List<CphTestCase>, source: ActiveRunButton) {
         if (cases.isEmpty() || running) return
         val identity = currentIdentity
         val targetCases = currentTargetCases
@@ -1221,6 +1482,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runtimeStates.clear()
         cases.forEach { runtimeStates[it.id] = RuntimeTabState.QUEUED }
         refreshTabs()
+        startRunSpinner(source)
         setRunning(true)
 
         object : Task.Backgroundable(project, "Running CPH samples", true) {
@@ -1360,10 +1622,40 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun setRunning(value: Boolean) {
         running = value
+        if (!value) {
+            stopRunSpinner()
+        }
         if (SwingUtilities.isEventDispatchThread()) {
             updateActions()
         } else {
             ApplicationManager.getApplication().invokeLater { updateActions() }
+        }
+    }
+
+    private fun startRunSpinner(source: ActiveRunButton) {
+        activeRunButton = source
+        runSpinnerIndex = 0
+        updateRunSpinnerText()
+        if (!runSpinnerTimer.isRunning) {
+            runSpinnerTimer.start()
+        }
+    }
+
+    private fun stopRunSpinner() {
+        runSpinnerTimer.stop()
+        activeRunButton = null
+        runAllButton.text = RUN_ALL_BUTTON_TEXT
+        runSelectedCaseButton.text = RUN_SELECTED_BUTTON_TEXT
+    }
+
+    private fun updateRunSpinnerText() {
+        val frame = RUN_SPINNER_FRAMES[runSpinnerIndex % RUN_SPINNER_FRAMES.size]
+        runSpinnerIndex++
+        runAllButton.text = if (activeRunButton == ActiveRunButton.RUN_ALL) frame else RUN_ALL_BUTTON_TEXT
+        runSelectedCaseButton.text = if (activeRunButton == ActiveRunButton.RUN_SELECTED) {
+            "$frame Run"
+        } else {
+            RUN_SELECTED_BUTTON_TEXT
         }
     }
 
@@ -1473,20 +1765,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun updateActions() {
         val runnable = currentIdentity.runnable && !running
+        val runAllActive = activeRunButton == ActiveRunButton.RUN_ALL
+        val runSelectedActive = activeRunButton == ActiveRunButton.RUN_SELECTED
         settingsButton.isEnabled = !running
         settingsButton.foreground = when {
             !settingsButton.isEnabled -> MUTED
             settingsVisible -> RUN
             else -> TEXT
         }
-        runSelectedCaseButton.isEnabled = selectedCase != null && runnable
-        runSelectedCaseButton.foreground = if (runSelectedCaseButton.isEnabled) GOOD else MUTED
+        runSelectedCaseButton.isEnabled = (selectedCase != null && runnable) || runSelectedActive
         debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
             currentIdentity.runnable &&
             (currentIdentity.kind == CphTargetKind.CMAKE_APP || currentIdentity.kind == CphTargetKind.CPP_FILE)
-        debugSelectedCaseButton.foreground = if (debugSelectedCaseButton.isEnabled) RUN else MUTED
-        runAllButton.isEnabled = currentTargetCases.cases.any { it.enabled } && runnable
-        runAllButton.foreground = if (runAllButton.isEnabled) GOOD else MUTED
+        runAllButton.isEnabled = (currentTargetCases.cases.any { it.enabled } && runnable) || runAllActive
         resetCasesButton.isEnabled = !running
         resetCasesButton.foreground = if (resetCasesButton.isEnabled) TEXT else MUTED
         timeoutSpinner.isEnabled = !running
@@ -1498,6 +1789,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         compileOptionsField.isEnabled = !running
         singleFileWorkingDirectoryField.isEnabled = !running
         singleFileWorkingDirectoryChooserButton.isEnabled = !running
+        refreshRunActionButtons()
     }
 
     private inner class CaseTab(
@@ -1541,9 +1833,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 MatteBorder(1, 1, 2, 1, tabBorder),
                 EmptyBorder(3, 10, 3, 8),
             )
-            preferredSize = Dimension(140, 60)
-            minimumSize = Dimension(116, 60)
-            maximumSize = Dimension(184, 60)
+            preferredSize = Dimension(123, 60)
+            minimumSize = Dimension(102, 60)
+            maximumSize = Dimension(161, 60)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
 
             enabledToggle.isSelected = testCase.enabled
@@ -1630,9 +1922,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 MatteBorder(1, 1, 2, 1, BORDER),
                 EmptyBorder(3, 10, 3, 8),
             )
-            preferredSize = Dimension(140, 60)
-            minimumSize = Dimension(116, 60)
-            maximumSize = Dimension(184, 60)
+            preferredSize = Dimension(123, 60)
+            minimumSize = Dimension(102, 60)
+            maximumSize = Dimension(161, 60)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = "Add case"
 
@@ -1736,6 +2028,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         RUNNING,
     }
 
+    private enum class ActiveRunButton {
+        RUN_ALL,
+        RUN_SELECTED,
+    }
+
     private enum class TabStatus(
         val label: String,
         val icon: String,
@@ -1767,6 +2064,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private val MUTED = Color(0x9BA3AF)
         private val GOOD = Color(0x65C466)
         private val BAD = Color(0xFF5A57)
+        private val ACTION_BUTTON_HOVER = Color(0x242B38)
+        private val ACTION_BUTTON_PRESSED = Color(0x2A3548)
         private val DIFF_BACKGROUND = Color(0x3A1F25)
         private val WARN = Color(0xF2A93B)
         private val RUN = Color(0x6EA2FF)
@@ -1775,7 +2074,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val SETTINGS_VIEW_CARD = "settings"
         private const val RESIZE_HANDLE_HEIGHT = 8
         private const val OUTPUT_DIVIDER_SIZE = 6
+        private const val TAB_STRIP_BASE_HEIGHT = 62
         private const val COMPILE_OPTIONS_SYNC_DELAY_MILLIS = 650
+        private const val SUBMISSION_STATUS_VISIBLE_MILLIS = 15_000
+        private val SUBMIT_SPINNER_FRAMES = arrayOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+        private val RUN_SPINNER_FRAMES = arrayOf("○", "◔", "◑", "◕")
+        private const val RUN_ALL_BUTTON_TEXT = "▷"
+        private const val RUN_SELECTED_BUTTON_TEXT = "▷ Run"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
         private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
 
