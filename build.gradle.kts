@@ -80,7 +80,7 @@ tasks.named("buildSearchableOptions").configure {
 }
 
 val buildBrowserExtension by tasks.registering(Sync::class) {
-    from(layout.projectDirectory.dir("browser-extension/cph-bridge")) {
+    from(layout.projectDirectory.dir("browser-extension/cph-target-runner")) {
         exclude("*.test.js")
     }
     into(layout.buildDirectory.dir("distributions/cph-target-runner-browser-${browserExtensionVersion.get()}"))

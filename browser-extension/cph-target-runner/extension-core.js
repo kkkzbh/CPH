@@ -61,7 +61,7 @@
     return { port, res };
   }
 
-  root.CphBridge = {
+  root.CphTargetRunnerExtension = {
     FETCH_TIMEOUT_MS,
     getPorts,
     rememberTab,

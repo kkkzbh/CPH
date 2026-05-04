@@ -1,4 +1,4 @@
-importScripts("submit-core.js", "bridge-core.js");
+importScripts("submit-core.js", "extension-core.js");
 
 const DEBOUNCE_MS = 200;
 const POLL_TIMEOUT_MS = 22000;
@@ -37,13 +37,13 @@ async function focusedCfTab() {
 
 async function postActiveTab(tab) {
   if (!tab || !CphSubmitCore.isProblemUrl(tab.url)) return;
-  const body = CphBridge.tabPayload(tab);
-  const ports = await CphBridge.getPorts();
+  const body = CphTargetRunnerExtension.tabPayload(tab);
+  const ports = await CphTargetRunnerExtension.getPorts();
   for (const port of ports) {
     try {
-      const res = await postWithTimeout(`http://127.0.0.1:${port}/cph/active-tab`, body, CphBridge.FETCH_TIMEOUT_MS);
+      const res = await postWithTimeout(`http://127.0.0.1:${port}/cph/active-tab`, body, CphTargetRunnerExtension.FETCH_TIMEOUT_MS);
       if (res.ok) {
-        await CphBridge.rememberTab(tab, port);
+        await CphTargetRunnerExtension.rememberTab(tab, port);
         return;
       }
     } catch (_) {
@@ -76,20 +76,20 @@ async function scheduleSubmitPoll(tab) {
 async function pollLoop(tab, key) {
   while (true) {
     if (!(await tabStillActive(tab))) return;
-    const body = CphBridge.tabPayload(tab);
-    const ports = await CphBridge.getPorts();
+    const body = CphTargetRunnerExtension.tabPayload(tab);
+    const ports = await CphTargetRunnerExtension.getPorts();
     let contacted = false;
     for (const port of ports) {
       try {
         const res = await postWithTimeout(`http://127.0.0.1:${port}/cph/submit/poll`, body, POLL_TIMEOUT_MS);
         if (res.status === 200) {
-          await CphBridge.rememberTab(tab, port);
+          await CphTargetRunnerExtension.rememberTab(tab, port);
           const job = await res.json();
           await handleSubmitJob(tab, port, job);
           return;
         }
         if (res.status === 204 || res.ok) {
-          await CphBridge.rememberTab(tab, port);
+          await CphTargetRunnerExtension.rememberTab(tab, port);
           contacted = true;
           break;
         }
@@ -353,7 +353,7 @@ async function sendUpdate(port, job, phase, text, extra = {}) {
     ...extra,
   };
   try {
-    await postWithTimeout(`http://127.0.0.1:${port}/cph/submit/update`, payload, CphBridge.FETCH_TIMEOUT_MS);
+    await postWithTimeout(`http://127.0.0.1:${port}/cph/submit/update`, payload, CphTargetRunnerExtension.FETCH_TIMEOUT_MS);
   } catch (_) {
     // The IDE may have closed; there is nowhere better to report this from the extension.
   }
@@ -413,13 +413,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "current tab is not a CF problem page" });
         return;
       }
-      const ports = await CphBridge.getPorts();
-      const body = CphBridge.tabPayload(tab);
+      const ports = await CphTargetRunnerExtension.getPorts();
+      const body = CphTargetRunnerExtension.tabPayload(tab);
       for (const port of ports) {
         try {
-          const res = await postWithTimeout(`http://127.0.0.1:${port}/cph/submit-now`, body, CphBridge.FETCH_TIMEOUT_MS);
+          const res = await postWithTimeout(`http://127.0.0.1:${port}/cph/submit-now`, body, CphTargetRunnerExtension.FETCH_TIMEOUT_MS);
           if (res.ok) {
-            await CphBridge.rememberTab(tab, port);
+            await CphTargetRunnerExtension.rememberTab(tab, port);
             scheduleSubmitPoll(tab);
             sendResponse({ ok: true });
             return;

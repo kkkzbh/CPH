@@ -9,12 +9,12 @@ On submit, the extension keeps the active problem tab intact, opens a new **Subm
 1. Open `chrome://extensions`.
 2. Toggle **Developer mode** on (top-right).
 3. Click **Load unpacked**.
-4. Select `build/distributions/cph-target-runner-browser-1.0.0/` after running `./gradlew buildPlugin`, or select `browser-extension/cph-bridge/` while developing from this checkout.
+4. Select `build/distributions/cph-target-runner-browser-1.0.0/` after running `./gradlew buildPlugin`, or select `browser-extension/cph-target-runner/` while developing from this checkout.
 5. Done. The extension now reports active CF tabs and waits for submit jobs from the IDE.
 
 ## Firefox
 
-The current bridge implementation targets Chromium Manifest V3 APIs (`chrome.scripting` and service workers). Use Chrome, Edge, Brave, or another Chromium browser for one-click submit.
+The current extension implementation targets Chromium Manifest V3 APIs (`chrome.scripting` and service workers). Use Chrome, Edge, Brave, or another Chromium browser for one-click submit.
 
 ## Verify it's working
 
