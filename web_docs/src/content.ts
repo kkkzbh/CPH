@@ -123,6 +123,22 @@ problems/\${source}/\${contest}/\${index}-\${slug}.cpp
 
 CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到浏览器当前打开的 Codeforces 题面。
 
+<div class="download-card">
+  <div class="download-card-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24" role="img">
+      <path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9A2.5 2.5 0 0 0 19 18.5V8l-5-5Z"></path>
+      <path d="M14 3v5h5"></path>
+      <path d="M12 10v6"></path>
+      <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
+    </svg>
+  </div>
+  <div class="download-card-body">
+    <strong>浏览器扩展</strong>
+    <span>Chrome / Edge / Brave 加载这个压缩包，配合当前浏览器登录态提交 Codeforces。</span>
+  </div>
+  <a class="download-card-button" href="https://github.com/kkkzbh/CPH/releases/download/v1.0.10/cph-target-runner-browser-1.0.0.zip" download>下载扩展</a>
+</div>
+
 ## 一次性配置
 
 1. 安装 **CPH Target Runner** 浏览器扩展：[安装说明](https://github.com/kkkzbh/CPH/blob/main/INSTALL_EXTENSION.md)。

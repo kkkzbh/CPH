@@ -360,6 +360,92 @@ pre {
   margin-top: 8px;
 }
 
+.download-card {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin: 26px 0 34px;
+  padding: 18px;
+  border: 1px solid rgba(15, 143, 132, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(15, 143, 132, 0.08), rgba(217, 119, 6, 0.06)),
+    #ffffff;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+}
+
+.download-card-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 8px;
+  color: #ffffff;
+  background: var(--accent-strong);
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22);
+}
+
+.download-card-icon svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
+}
+
+.download-card-body {
+  min-width: 0;
+}
+
+.download-card-body strong,
+.download-card-body span {
+  display: block;
+}
+
+.download-card-body strong {
+  color: #0b1220;
+  font-size: 17px;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.download-card-body span {
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.reader .download-card-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border-radius: 7px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  background: var(--accent-strong);
+  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.18);
+  transition:
+    background 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.reader .download-card-button:hover {
+  color: #ffffff;
+  background: #0d665f;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(15, 118, 110, 0.24);
+}
+
 .reader a {
   color: var(--accent-strong);
   font-weight: 600;
@@ -737,6 +823,27 @@ pre {
   .reader li {
     font-size: 15px;
     line-height: 1.7;
+  }
+
+  .download-card {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .download-card-icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  .download-card-icon svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .reader .download-card-button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .reader table {
