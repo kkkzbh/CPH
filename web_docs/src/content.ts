@@ -95,9 +95,9 @@ cf/1/A.cpp
 
 ## 自定义路径模板
 
-在 **Settings / Tools / CPH 竞赛伴侣** 中可以修改路径模板。可用变量包括：
+在 **Settings / Tools / CPH Target Runner** 中可以修改路径模板。可用变量包括：
 
-![CLion 中的 CPH 竞赛伴侣设置](/assets/companion-clion-settings.png)
+![CLion 中的 CPH Target Runner 设置](/assets/companion-clion-settings.png)
 
 \`\`\`text
 \${contest} \${index} \${name} \${slug} \${source}

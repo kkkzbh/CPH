@@ -36,7 +36,7 @@
         <projectService serviceImplementation="org.kkkzbh.cph.submit.CphSubmitOrchestrator" />
         <applicationConfigurable parentId="tools"
                                  id="org.kkkzbh.cph.settings"
-                                 displayName="CPH 竞赛伴侣"
+                                 displayName="CPH Target Runner"
                                  instance="org.kkkzbh.cph.server.CphImportSettingsConfigurable" />
         <postStartupActivity implementation="org.kkkzbh.cph.server.CphCompetitiveCompanionStarter" />
         <notificationGroup id="CPH Target Runner" displayType="BALLOON" />

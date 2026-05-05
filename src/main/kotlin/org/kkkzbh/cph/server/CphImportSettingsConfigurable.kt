@@ -34,7 +34,7 @@ internal class CphImportSettingsConfigurable : Configurable {
     private val cfLanguageCombo = JComboBox(CphCfLanguage.entries.toTypedArray())
     private var cfLanguageInitial = CphCfLanguage.CPP_17
 
-    override fun getDisplayName(): String = "CPH 竞赛伴侣"
+    override fun getDisplayName(): String = "CPH Target Runner"
 
     override fun createComponent(): JComponent {
         val panel = JPanel(GridBagLayout())
