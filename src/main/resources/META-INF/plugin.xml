@@ -46,6 +46,7 @@
         <notificationGroup id="CPH Submit" displayType="BALLOON" />
         <toolWindow id="CPH"
                     anchor="right"
+                    icon="/icons/cphToolWindow.svg"
                     factoryClass="org.kkkzbh.cph.CphToolWindowFactory"
                     canCloseContents="false" />
     </extensions>
