@@ -1,5 +1,6 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.bundling.Zip
 
 plugins {
     id("java")
@@ -18,6 +19,7 @@ val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
 val marketplaceToken = providers.environmentVariable("JB_MARKETPLACE_TOKEN")
 val browserExtensionVersion = providers.gradleProperty("browserExtensionVersion").orElse("1.0.0")
+val browserExtensionDistributionName = "cph-target-runner-browser-${browserExtensionVersion.get()}"
 
 kotlin {
     jvmToolchain(21)
@@ -83,7 +85,16 @@ val buildBrowserExtension by tasks.registering(Sync::class) {
     from(layout.projectDirectory.dir("browser-extension/cph-target-runner")) {
         exclude("*.test.js")
     }
-    into(layout.buildDirectory.dir("distributions/cph-target-runner-browser-${browserExtensionVersion.get()}"))
+    into(layout.buildDirectory.dir("distributions/$browserExtensionDistributionName"))
+}
+
+val packageBrowserExtension by tasks.registering(Zip::class) {
+    dependsOn(buildBrowserExtension)
+    archiveFileName.set("$browserExtensionDistributionName.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    from(layout.buildDirectory.dir("distributions/$browserExtensionDistributionName")) {
+        into(browserExtensionDistributionName)
+    }
 }
 
 tasks.named("buildPlugin") {

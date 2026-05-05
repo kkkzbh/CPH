@@ -113,6 +113,37 @@ problems/\${source}/\${contest}/\${index}-\${slug}.cpp
 7. 打开源码文件。
 `,
   },
+  {
+    id: "codeforces-submit",
+    group: "工作流",
+    title: "Codeforces 快速提交",
+    description: "用浏览器当前 CF 题面提交当前 cpp。",
+    markdown: `
+# Codeforces 快速提交
+
+CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到浏览器当前打开的 Codeforces 题面。
+
+## 一次性配置
+
+1. 安装 **CPH Target Runner** 浏览器扩展：[安装说明](https://github.com/kkkzbh/CPH/blob/main/INSTALL_EXTENSION.md)。
+2. 在同一个浏览器里登录 Codeforces。
+3. 打开 **Settings / Tools / CPH 竞赛伴侣**，在 **Codeforces 一键提交** 里选择 **Language**。
+
+## 提交一题
+
+1. 浏览器停在要提交的 CF 题面，例如 \`https://codeforces.com/contest/1/problem/A\`。
+2. CLion 编辑器打开任意 \`.cpp\` 文件。
+3. 点击 CPH 工具窗顶部的 📤；如果你在 CPH 设置里配置了提交快捷键，也可以直接按快捷键。
+4. 看工具栏下方状态行：\`Submitting...\` → \`In queue\` → \`Running on test K\` → 最终结果。
+
+## 注意
+
+- 不需要文件和题目绑定：当前编辑器文件会提交到浏览器当前 CF 题面。
+- 插件不保存 Codeforces 账号、密码或 Cookie。
+- 浏览器扩展使用当前浏览器的 Codeforces 登录态提交源码。
+- 支持普通练习、现场赛、虚拟赛和 Gym。
+`,
+  },
 ];
 
 export const groups: DocGroup[] = ["开始", "工作流"];

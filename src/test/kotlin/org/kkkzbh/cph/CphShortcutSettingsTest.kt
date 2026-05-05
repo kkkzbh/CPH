@@ -20,6 +20,7 @@ class CphShortcutSettingsTest {
         assertTrue(state.runAllShortcut.isBlank())
         assertTrue(state.runSelectedCaseShortcut.isBlank())
         assertTrue(state.debugSelectedCaseShortcut.isBlank())
+        assertTrue(state.submitShortcut.isBlank())
     }
 
     @Test
@@ -41,10 +42,12 @@ class CphShortcutSettingsTest {
                 runSelectedCaseShortcut = CphShortcutMatcher.toStorageString(
                     KeyStroke.getKeyStroke(KeyEvent.VK_F10, InputEvent.SHIFT_DOWN_MASK),
                 ),
+                submitShortcut = "still invalid",
             ),
         )
 
         assertEquals("", service.state.runAllShortcut)
+        assertEquals("", service.state.submitShortcut)
         assertEquals(
             KeyStroke.getKeyStroke(KeyEvent.VK_F10, InputEvent.SHIFT_DOWN_MASK),
             CphShortcutMatcher.parseShortcut(service.state.runSelectedCaseShortcut),
@@ -61,6 +64,7 @@ class CphShortcutSettingsTest {
                 runAllShortcut = stored,
                 runSelectedCaseShortcut = "",
                 debugSelectedCaseShortcut = stored,
+                submitShortcut = "",
             ),
         )
 
@@ -84,6 +88,19 @@ class CphShortcutSettingsTest {
 
         assertEquals(
             CphShortcutAction.RUN_ALL,
+            CphShortcutMatcher.actionFor(keyStroke, state, fromShortcutInput = false),
+        )
+    }
+
+    @Test
+    fun configuredSubmitShortcutMatchesAction() {
+        val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK)
+        val state = CphShortcutSettingsState(
+            submitShortcut = CphShortcutMatcher.toStorageString(keyStroke),
+        )
+
+        assertEquals(
+            CphShortcutAction.SUBMIT,
             CphShortcutMatcher.actionFor(keyStroke, state, fromShortcutInput = false),
         )
     }

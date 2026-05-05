@@ -13,12 +13,14 @@ internal data class CphShortcutSettingsState(
     var runAllShortcut: String = "",
     var runSelectedCaseShortcut: String = "",
     var debugSelectedCaseShortcut: String = "",
+    var submitShortcut: String = "",
 )
 
 internal enum class CphShortcutAction(val displayName: String) {
     RUN_ALL("全局运行快捷键"),
     RUN_SELECTED_CASE("单CASE运行快捷键"),
     DEBUG_SELECTED_CASE("单CASE调试快捷键"),
+    SUBMIT("提交CF快捷键"),
 }
 
 internal object CphShortcutMatcher {
@@ -106,6 +108,7 @@ internal object CphShortcutMatcher {
             CphShortcutAction.RUN_ALL to state.runAllShortcut,
             CphShortcutAction.RUN_SELECTED_CASE to state.runSelectedCaseShortcut,
             CphShortcutAction.DEBUG_SELECTED_CASE to state.debugSelectedCaseShortcut,
+            CphShortcutAction.SUBMIT to state.submitShortcut,
         )
     }
 
@@ -129,6 +132,7 @@ internal class CphShortcutSettings : PersistentStateComponent<CphShortcutSetting
             runAllShortcut = CphShortcutMatcher.normalizeShortcutText(state.runAllShortcut),
             runSelectedCaseShortcut = CphShortcutMatcher.normalizeShortcutText(state.runSelectedCaseShortcut),
             debugSelectedCaseShortcut = CphShortcutMatcher.normalizeShortcutText(state.debugSelectedCaseShortcut),
+            submitShortcut = CphShortcutMatcher.normalizeShortcutText(state.submitShortcut),
         )
     }
 
@@ -136,6 +140,7 @@ internal class CphShortcutSettings : PersistentStateComponent<CphShortcutSetting
         state.runAllShortcut = CphShortcutMatcher.normalizeShortcutText(nextState.runAllShortcut)
         state.runSelectedCaseShortcut = CphShortcutMatcher.normalizeShortcutText(nextState.runSelectedCaseShortcut)
         state.debugSelectedCaseShortcut = CphShortcutMatcher.normalizeShortcutText(nextState.debugSelectedCaseShortcut)
+        state.submitShortcut = CphShortcutMatcher.normalizeShortcutText(nextState.submitShortcut)
     }
 
     companion object {

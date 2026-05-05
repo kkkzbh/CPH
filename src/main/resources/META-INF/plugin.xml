@@ -55,8 +55,6 @@
         <action id="cph.submit"
                 class="org.kkkzbh.cph.submit.CphSubmitAction"
                 text="CPH: Submit Current File to Codeforces"
-                description="Submit the current editor file to the Codeforces problem currently open in your browser tab.">
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt ENTER"/>
-        </action>
+                description="Submit the current editor file to the Codeforces problem currently open in your browser tab." />
     </actions>
 </idea-plugin>
