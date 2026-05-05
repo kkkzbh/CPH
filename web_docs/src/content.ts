@@ -125,12 +125,7 @@ CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到
 
 <div class="download-card">
   <div class="download-card-icon" aria-hidden="true">
-    <svg viewBox="0 0 24 24" role="img">
-      <path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9A2.5 2.5 0 0 0 19 18.5V8l-5-5Z"></path>
-      <path d="M14 3v5h5"></path>
-      <path d="M12 10v6"></path>
-      <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
-    </svg>
+    <img src="/assets/plugin-icon.png" alt="" />
   </div>
   <div class="download-card-body">
     <strong>浏览器扩展</strong>
