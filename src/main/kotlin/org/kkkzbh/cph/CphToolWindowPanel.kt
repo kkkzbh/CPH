@@ -210,6 +210,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val helpButton = JButton("?")
     private val verdictLabel = JBLabel("")
     private var verdictPageUrl: String? = null
+    private var submitBusy = false
     private var submitSpinnerIndex = 0
     private val submitSpinnerTimer = Timer(120) {
         submitButton.text = SUBMIT_SPINNER_FRAMES[submitSpinnerIndex % SUBMIT_SPINNER_FRAMES.size]
@@ -309,6 +310,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             if (!applyingTargetSettings) {
                 stateService.getState().singleFileModeEnabled = singleFileModeEnabled.isSelected
                 CphSingleFileModeService.getInstance(project).syncForCurrentFile(force = true)
+                refreshSubmitButtonTooltip()
+                setSubmitBusy(submitBusy)
+                refreshRunActionButtons()
             }
         }
         singleFileWorkingDirectoryChooserButton.addActionListener { chooseSingleFileWorkingDirectory() }
@@ -384,6 +388,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         installSubmissionListeners()
         refreshTarget()
         refreshShortcutSettings()
+        setSubmitBusy(false)
         refreshSubmitButtonTooltip()
     }
 
@@ -503,7 +508,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun setSubmitBusy(busy: Boolean) {
-        submitButton.isEnabled = !busy
+        submitBusy = busy
+        submitButton.isEnabled = !busy && stateService.getState().singleFileModeEnabled
         refreshToolbarIconButton(submitButton, RUN)
         if (busy) {
             if (!submitSpinnerTimer.isRunning) {
@@ -530,6 +536,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val tab = CphActiveTabService.getInstance().current()
         val ctx = tab?.let { CphSubmitContextResolver.resolve(it.url) }
         submitButton.toolTipText = when {
+            !stateService.getState().singleFileModeEnabled -> "Enable pure single-file mode before submitting to Codeforces"
             ctx != null -> "Submit current file → ${ctx.displayId}"
             tab != null -> "Active tab is not a Codeforces problem page"
             else -> "No active Codeforces tab — install the CPH Target Runner browser extension"
@@ -1505,6 +1512,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val ignoreTrailing = currentTargetCases.ignoreTrailingWhitespace
         val noExpectedMode = stateService.getState().ui.noExpectedModeEnabled
         val shouldAutoSubmitOnAllAccepted = stateService.getState().ui.confidentSubmitEnabled &&
+            stateService.getState().singleFileModeEnabled &&
             source == ActiveRunButton.RUN_ALL
         var completedAllCases = false
         runtimeStates.clear()
@@ -1814,7 +1822,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         timeoutSpinner.isEnabled = !running
         editorFontSizeSpinner.isEnabled = !running
         noExpectedModeEnabled.isEnabled = !running
-        confidentSubmitEnabled.isEnabled = !running
+        confidentSubmitEnabled.isEnabled = !running && stateService.getState().singleFileModeEnabled
         ignoreTrailingWhitespace.isEnabled = !running
         outputSplitEnabled.isEnabled = !running && !stateService.getState().ui.noExpectedModeEnabled
         cppStandardCombo.isEnabled = !running

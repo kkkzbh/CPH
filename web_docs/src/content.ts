@@ -153,8 +153,8 @@ CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到
 
 ## 提交一题
 
-1. 浏览器停在要提交的 CF 题面，例如 \`https://codeforces.com/contest/1/problem/A\`。
-2. CLion 编辑器打开任意 \`.cpp\` 文件。
+1. 浏览器停在要提交的 CF 题面，例如 [https://codeforces.com/contest/1/problem/A](https://codeforces.com/contest/1/problem/A)。
+2. 保持 CPH 处于纯单文件模式，CLion 编辑器打开任意 \`.cpp\` 文件。
 3. 点击 CPH 工具窗顶部的 📤；如果你在 CPH 设置里配置了提交快捷键，也可以直接按快捷键。
 4. 看工具栏下方状态行：\`Submitting...\` → \`In queue\` → \`Running on test K\` → 最终结果。
 

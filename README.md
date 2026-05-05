@@ -96,8 +96,8 @@ problems/${source}/${contest}/${index}-${slug}.cpp
 
 ### 使用
 
-1. 浏览器停留在某 CF 题面 Tab。
-2. CLion 编辑器打开任意 `.cpp`。
+1. 浏览器停留在某 CF 题面 Tab，例如 [https://codeforces.com/contest/1/problem/A](https://codeforces.com/contest/1/problem/A)。
+2. 保持 CPH 处于纯单文件模式，CLion 编辑器打开任意 `.cpp`。
 3. 点击工具窗的 📤；如果你在 CPH 设置里配置了提交快捷键，也可以直接按快捷键。
 4. 工具栏下方的临时提交状态行实时显示：`Submitting…` → `In queue` → `Running on test K` → `Accepted · 46 ms · 3200 KB` 或 `Wrong answer on test 5 · 31 ms`，最终状态 15 秒后自动隐藏。
 

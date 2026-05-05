@@ -13,6 +13,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import org.kkkzbh.cph.CphStateService
 import java.util.UUID
 
 internal data class CphSubmitBridgeJob(
@@ -94,6 +95,10 @@ internal class CphSubmitOrchestrator(private val project: Project) {
         }
 
         try {
+            if (!CphStateService.getInstance(project).state.singleFileModeEnabled) {
+                warnAndIdle("Codeforces submit requires pure single-file mode. Enable pure single-file mode in CPH settings first.")
+                return
+            }
             val tab = CphActiveTabService.getInstance().current()
             if (tab == null) {
                 warnAndIdle("No active Codeforces tab — install/open the CPH Target Runner browser extension and focus a CF problem page.")
