@@ -53,7 +53,9 @@ export const docPages: DocPage[] = [
 ## 准备浏览器扩展
 
 <div class="download-card">
-  <div class="download-card-icon download-card-icon-text" aria-hidden="true">CC</div>
+  <div class="download-card-icon" aria-hidden="true">
+    <img src="/assets/competitive-companion-icon.png" alt="" />
+  </div>
   <div class="download-card-body">
     <strong>Competitive Companion</strong>
     <span>从 Chrome 应用商店安装后，一键把题面样例发送到 CPH。</span>
@@ -147,7 +149,7 @@ CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到
 
 1. 安装 **CPH Target Runner** 浏览器扩展：[安装说明](https://github.com/kkkzbh/CPH/blob/main/INSTALL_EXTENSION.md)。
 2. 在同一个浏览器里登录 Codeforces。
-3. 打开 **Settings / Tools / CPH 竞赛伴侣**，在 **Codeforces 一键提交** 里选择 **Language**。
+3. 打开 **Settings / Tools / CPH Target Runner**，在 **Codeforces 一键提交** 里选择 **Language**。
 
 ## 提交一题
 
