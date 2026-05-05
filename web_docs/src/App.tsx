@@ -36,6 +36,8 @@ const groupIcons: Record<DocGroup, typeof BookOpen> = {
   排错: CheckCircle2,
 };
 
+const deployMarker = "cloudflare-pages-redeploy-20260505";
+
 function parseHash(): string {
   const raw = window.location.hash.replace(/^#\/?/, "");
   return raw || docPages[0].id;
@@ -250,7 +252,7 @@ function App() {
         {navOpen ? <X size={18} /> : <Menu size={18} />}
       </button>
 
-      <div className="docs-layout">
+      <div className="docs-layout" data-deploy-marker={deployMarker}>
         <aside className={`left-nav ${navOpen ? "is-open" : ""}`}>
           <a className="sidebar-brand" href="#/">
             <span className="sidebar-brand-mark">
