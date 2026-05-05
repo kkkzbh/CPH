@@ -7,6 +7,7 @@ import com.intellij.openapi.components.Storage
 
 internal data class CphPluginSettingsState(
     var codeforcesRemoteSubmitEnabled: Boolean = false,
+    var selectedThemeId: String = CphThemeId.CLASSIC,
 )
 
 @State(name = "CphPluginSettings", storages = [Storage("cph-plugin-settings.xml")])
@@ -16,6 +17,7 @@ internal class CphPluginSettings : PersistentStateComponent<CphPluginSettingsSta
     override fun getState(): CphPluginSettingsState = state
 
     override fun loadState(state: CphPluginSettingsState) {
+        state.selectedThemeId = CphThemeId.normalize(state.selectedThemeId)
         this.state = state
     }
 

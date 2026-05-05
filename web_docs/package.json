@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "cf:projects": "wrangler pages project list",
+    "cf:deploy": "npm run build && wrangler pages deploy dist --project-name=cph --branch=main",
+    "cf:deploy:preview": "npm run build && wrangler pages deploy dist --project-name=cph"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -18,10 +21,11 @@
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.1",
     "typescript": "^5.6.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "wrangler": "^4.87.0"
   }
 }
