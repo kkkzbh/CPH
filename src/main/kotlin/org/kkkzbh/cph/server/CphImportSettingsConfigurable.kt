@@ -8,12 +8,10 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import org.kkkzbh.cph.submit.CphCfLanguage
-import org.kkkzbh.cph.submit.CphSubmitSettings
+import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
-import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollPane
@@ -30,9 +28,6 @@ internal class CphImportSettingsConfigurable : Configurable {
     private val templateArea = JBTextArea(8, 60)
     private val overwriteCheckBox = JBCheckBox("重新导入同一题目时覆盖已存在的源文件")
     private val statusLabel = JBLabel()
-
-    private val cfLanguageCombo = JComboBox(CphCfLanguage.entries.toTypedArray())
-    private var cfLanguageInitial = CphCfLanguage.CPP_17
 
     override fun getDisplayName(): String = "CPH Target Runner"
 
@@ -87,19 +82,20 @@ internal class CphImportSettingsConfigurable : Configurable {
         panel.add(JScrollPane(templateArea), gbc)
         gbc.gridy++; gbc.weighty = 0.0; gbc.gridwidth = 1
 
-        addFullRow(separator(8))
-        addFullRow(JBLabel("Codeforces 一键提交").apply {
-            font = font.deriveFont(font.style or java.awt.Font.BOLD, font.size + 1f)
-        })
-        addRow("Language：", cfLanguageCombo)
-        addFullRow(
-            JBLabel("提交由 CPH Target Runner 浏览器扩展在当前 Codeforces 登录态中完成；CLion 不再保存 CF 账号或密码。")
-                .apply { foreground = UIUtil.getInactiveTextColor() }
-        )
-        addFullRow(
-            JBLabel("点击 CPH 工具栏 📤 即提交（无确认框）：当前编辑器文件 → 浏览器活动 CF Tab。需先在浏览器登录 CF 并安装 CPH Target Runner 浏览器扩展。")
-                .apply { foreground = UIUtil.getInactiveTextColor() }
-        )
+        if (CphCodeforcesSubmitFeature.isEnabled()) {
+            addFullRow(separator(8))
+            addFullRow(JBLabel("Codeforces 一键提交").apply {
+                font = font.deriveFont(font.style or java.awt.Font.BOLD, font.size + 1f)
+            })
+            addFullRow(
+                JBLabel("提交语言自动跟随 CPH 工具窗的 C++ 标准；超过 Codeforces 当前支持上限时使用 GNU G++23。")
+                    .apply { foreground = UIUtil.getInactiveTextColor() }
+            )
+            addFullRow(
+                JBLabel("点击 CPH 工具栏 📤 即提交（无确认框）：当前编辑器文件 → 浏览器活动 CF Tab。需先在浏览器登录 CF 并安装 CPH Target Runner 浏览器扩展。")
+                    .apply { foreground = UIUtil.getInactiveTextColor() }
+            )
+        }
 
         addFullRow(separator(8))
         addFullRow(JBLabel("使用说明").apply {
@@ -167,8 +163,7 @@ internal class CphImportSettingsConfigurable : Configurable {
             (portSpinner.value as Int) != state.port ||
             templateArea.text != state.cppTemplate ||
             overwriteCheckBox.isSelected != state.overwriteExisting ||
-            enabledCheckBox.isSelected != state.enabled ||
-            (cfLanguageCombo.selectedItem as? CphCfLanguage ?: CphCfLanguage.CPP_17) != cfLanguageInitial
+            enabledCheckBox.isSelected != state.enabled
     }
 
     override fun apply() {
@@ -181,9 +176,6 @@ internal class CphImportSettingsConfigurable : Configurable {
         current.enabled = enabledCheckBox.isSelected
         CphCompetitiveCompanionServer.getInstance().reload()
 
-        val cfSettings = CphSubmitSettings.getInstance()
-        cfSettings.state.defaultLang = (cfLanguageCombo.selectedItem as? CphCfLanguage ?: CphCfLanguage.CPP_17).name
-        cfLanguageInitial = cfSettings.language()
         refreshStatus()
     }
 
@@ -196,9 +188,6 @@ internal class CphImportSettingsConfigurable : Configurable {
         overwriteCheckBox.isSelected = state.overwriteExisting
         enabledCheckBox.isSelected = state.enabled
 
-        val cfState = CphSubmitSettings.getInstance().state
-        cfLanguageCombo.selectedItem = CphCfLanguage.fromKey(cfState.defaultLang)
-        cfLanguageInitial = CphCfLanguage.fromKey(cfState.defaultLang)
         refreshStatus()
     }
 }

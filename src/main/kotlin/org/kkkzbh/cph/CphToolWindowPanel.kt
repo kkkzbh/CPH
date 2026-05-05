@@ -18,6 +18,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.ide.BrowserUtil
 import com.intellij.ui.components.JBLabel
@@ -193,6 +194,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var selectedCase: CphTestCase? = null
     private var running = false
     private var settingsVisible = false
+    private var pluginsVisible = false
     private var pendingTargetRefresh = false
     private var applyingTargetSettings = false
     private var applyingShortcutSettings = false
@@ -208,6 +210,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val runAllButton = JButton(RUN_ALL_BUTTON_TEXT)
     private val submitButton = JButton("📤")
     private val helpButton = JButton("?")
+    private val pluginButton = JButton(IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
+    private val codeforcesPluginToggleButton = JButton()
     private val verdictLabel = JBLabel("")
     private var verdictPageUrl: String? = null
     private var submitBusy = false
@@ -286,6 +290,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         debugSelectedCaseButton.toolTipText = "Debug this case with the selected run target"
         settingsButton.toolTipText = "Settings"
         helpButton.toolTipText = "Open CPH documentation"
+        pluginButton.toolTipText = "Plugin"
         singleFileModeEnabled.toolTipText = "Automatically select or create the C/C++ File run target for the focused .cpp file"
         singleFileWorkingDirectoryField.toolTipText = "Working directory for CPH-managed C/C++ File run targets"
         singleFileWorkingDirectoryChooserButton.toolTipText = "Choose working directory"
@@ -296,6 +301,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureSettingsButton()
         configureSubmitButton()
         configureHelpButton()
+        configurePluginButton()
         configureVerdictLabel()
         configureWorkingDirectoryChooserButton()
 
@@ -303,6 +309,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runAllButton.addActionListener { runAllCases() }
         submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
         helpButton.addActionListener { BrowserUtil.browse(CPH_DOCS_URL) }
+        pluginButton.addActionListener { togglePluginsPanel() }
+        codeforcesPluginToggleButton.addActionListener { toggleCodeforcesSubmitPlugin() }
         resetCasesButton.addActionListener { resetCases() }
         runSelectedCaseButton.addActionListener { runSelectedCase() }
         debugSelectedCaseButton.addActionListener { debugSelectedCase() }
@@ -389,6 +397,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshTarget()
         refreshShortcutSettings()
         setSubmitBusy(false)
+        refreshCodeforcesPluginUi()
+        refreshSubmitFeatureVisibility()
         refreshSubmitButtonTooltip()
     }
 
@@ -403,7 +413,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             CphShortcutAction.RUN_ALL -> runAllCases()
             CphShortcutAction.RUN_SELECTED_CASE -> runSelectedCase()
             CphShortcutAction.DEBUG_SELECTED_CASE -> debugSelectedCase()
-            CphShortcutAction.SUBMIT -> CphSubmitOrchestrator.getInstance(project).submit()
+            CphShortcutAction.SUBMIT -> {
+                if (isCodeforcesSubmitPluginEnabled()) {
+                    CphSubmitOrchestrator.getInstance(project).submit()
+                }
+            }
         }
     }
 
@@ -419,6 +433,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         toolbar.add(resetCasesButton)
         toolbar.add(settingsButton)
         toolbar.add(helpButton)
+        toolbar.add(pluginButton)
         toolbar.alignmentX = Component.LEFT_ALIGNMENT
 
         submissionStatusPanel.background = SURFACE
@@ -467,6 +482,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun applySubmissionStatus(status: CphSubmissionStatus) {
+        if (!isCodeforcesSubmitPluginEnabled()) {
+            hideSubmissionStatus()
+            setSubmitBusy(false)
+            return
+        }
         if (status.phase == CphSubmissionPhase.IDLE) {
             verdictPageUrl = null
             hideSubmissionStatus()
@@ -508,10 +528,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun setSubmitBusy(busy: Boolean) {
-        submitBusy = busy
-        submitButton.isEnabled = !busy && stateService.getState().singleFileModeEnabled
+        val featureEnabled = isCodeforcesSubmitPluginEnabled()
+        submitBusy = busy && featureEnabled
+        submitButton.isVisible = featureEnabled
+        submitButton.isEnabled = featureEnabled && !submitBusy && stateService.getState().singleFileModeEnabled
         refreshToolbarIconButton(submitButton, RUN)
-        if (busy) {
+        if (submitBusy) {
             if (!submitSpinnerTimer.isRunning) {
                 submitSpinnerIndex = 0
                 submitSpinnerTimer.start()
@@ -533,6 +555,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun refreshSubmitButtonTooltip() {
+        if (!isCodeforcesSubmitPluginEnabled()) {
+            submitButton.toolTipText = null
+            return
+        }
         val tab = CphActiveTabService.getInstance().current()
         val ctx = tab?.let { CphSubmitContextResolver.resolve(it.url) }
         submitButton.toolTipText = when {
@@ -542,6 +568,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             else -> "No active Codeforces tab — install the CPH Target Runner browser extension"
         }
     }
+
+    private fun refreshSubmitFeatureVisibility() {
+        val enabled = isCodeforcesSubmitPluginEnabled()
+        submitButton.isVisible = enabled
+        if (!enabled) {
+            hideSubmissionStatus()
+        }
+        setSubmitBusy(submitBusy)
+        revalidate()
+        repaint()
+    }
+
+    private fun isCodeforcesSubmitPluginEnabled(): Boolean =
+        CphCodeforcesSubmitFeature.isEnabled()
 
     private fun configureRunAllButton() {
         configureToolbarIconButton(runAllButton, GOOD)
@@ -618,6 +658,40 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureToolbarIconButton(helpButton, TEXT, fontDelta = 1.0f)
     }
 
+    private fun configurePluginButton() {
+        pluginButton.foreground = TEXT
+        pluginButton.background = PANEL
+        pluginButton.isOpaque = false
+        pluginButton.isContentAreaFilled = false
+        pluginButton.isBorderPainted = false
+        pluginButton.isFocusPainted = false
+        pluginButton.isRolloverEnabled = true
+        pluginButton.text = null
+        pluginButton.iconTextGap = 0
+        pluginButton.border = EmptyBorder(2, 6, 2, 6)
+        pluginButton.preferredSize = Dimension(34, 28)
+        pluginButton.minimumSize = pluginButton.preferredSize
+        pluginButton.maximumSize = pluginButton.preferredSize
+        pluginButton.model.addChangeListener(ChangeListener { refreshPluginButton() })
+        refreshPluginButton()
+    }
+
+    private fun refreshPluginButton() {
+        val model = pluginButton.model
+        val pressed = model.isPressed && model.isArmed
+        val highlighted = pluginsVisible || pluginButton.isEnabled && (pressed || model.isRollover)
+        pluginButton.foreground = if (pluginsVisible) RUN else TEXT
+        pluginButton.background = when {
+            pluginsVisible -> ACTION_BUTTON_HOVER
+            pressed -> ACTION_BUTTON_PRESSED
+            model.isRollover -> ACTION_BUTTON_HOVER
+            else -> PANEL
+        }
+        pluginButton.isOpaque = highlighted
+        pluginButton.isContentAreaFilled = highlighted
+        pluginButton.repaint()
+    }
+
     private fun configureToolbarIconButton(button: JButton, baseColor: Color, fontDelta: Float = 2.0f) {
         configureToolbarIconButton(button, { baseColor }, fontDelta)
     }
@@ -674,6 +748,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         contentCards.background = PANEL
         contentCards.add(buildMainView(), MAIN_VIEW_CARD)
         contentCards.add(buildSettingsView(), SETTINGS_VIEW_CARD)
+        contentCards.add(buildPluginsView(), PLUGINS_VIEW_CARD)
         showActiveView()
         return contentCards
     }
@@ -727,6 +802,23 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         settingsGrid.isFocusable = true
         settingsGrid.background = PANEL
         settingsGrid.border = EmptyBorder(10, 0, 0, 0)
+        rebuildSettingsGrid()
+
+        val viewport = JPanel(BorderLayout())
+        viewport.isFocusable = true
+        viewport.background = PANEL
+        viewport.border = EmptyBorder(0, 0, 0, 0)
+        viewport.add(settingsGrid, BorderLayout.NORTH)
+        installSettingsFocusReset(viewport)
+
+        return JBScrollPane(viewport).also {
+            it.border = MatteBorder(1, 0, 0, 0, BORDER)
+            it.viewport.background = PANEL
+            it.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+    }
+
+    private fun rebuildSettingsGrid() {
         settingsGrid.removeAll()
         settingsGrid.add(buildSettingsReturnHint())
         settingsGrid.add(settingsSection("运行设置") {
@@ -744,30 +836,125 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             settingCheckBoxRow(noExpectedModeEnabled)
             settingCheckBoxRow(outputSplitEnabled)
         })
-        settingsGrid.add(Box.createVerticalStrut(8))
-        settingsGrid.add(settingsSection("提交设置") {
-            settingCheckBoxRow(confidentSubmitEnabled)
-        })
+        if (isCodeforcesSubmitPluginEnabled()) {
+            settingsGrid.add(Box.createVerticalStrut(8))
+            settingsGrid.add(settingsSection("提交设置") {
+                settingCheckBoxRow(confidentSubmitEnabled)
+            })
+        }
         settingsGrid.add(Box.createVerticalStrut(8))
         settingsGrid.add(settingsSection("快捷键") {
             settingRow("全局运行快捷键：", runAllShortcutField)
             settingRow("单CASE运行快捷键：", runSelectedCaseShortcutField)
             settingRow("单CASE调试快捷键：", debugSelectedCaseShortcutField)
-            settingRow("提交CF快捷键：", submitShortcutField)
+            if (isCodeforcesSubmitPluginEnabled()) {
+                settingRow("提交CF快捷键：", submitShortcutField)
+            }
         })
+        settingsGrid.revalidate()
+        settingsGrid.repaint()
+    }
 
-        val viewport = JPanel(BorderLayout())
-        viewport.isFocusable = true
-        viewport.background = PANEL
-        viewport.border = EmptyBorder(0, 0, 0, 0)
-        viewport.add(settingsGrid, BorderLayout.NORTH)
-        installSettingsFocusReset(viewport)
-
+    private fun buildPluginsView(): JComponent {
+        val list = JPanel().also {
+            it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
+            it.background = PANEL
+            it.border = EmptyBorder(10, 0, 0, 0)
+            it.add(buildCodeforcesSubmitPluginRow())
+            it.add(Box.createVerticalGlue())
+        }
+        val viewport = JPanel(BorderLayout()).also {
+            it.background = PANEL
+            it.border = EmptyBorder(0, 0, 0, 0)
+            it.add(list, BorderLayout.NORTH)
+        }
         return JBScrollPane(viewport).also {
             it.border = MatteBorder(1, 0, 0, 0, BORDER)
             it.viewport.background = PANEL
             it.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
+    }
+
+    private fun buildCodeforcesSubmitPluginRow(): JComponent {
+        val icon = JBLabel(IconLoader.getIcon("/icons/codeforces.svg", CphToolWindowPanel::class.java)).also {
+            it.horizontalAlignment = SwingConstants.CENTER
+            it.preferredSize = Dimension(70, 64)
+            it.minimumSize = it.preferredSize
+            it.maximumSize = it.preferredSize
+        }
+        val title = JBLabel("Codeforces 远程提交").also {
+            it.foreground = TEXT
+            it.font = it.font.deriveFont(Font.BOLD)
+            it.alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val summary = JBTextArea("使用浏览器当前 Codeforces 题面和登录态提交当前 C++ 文件。").also {
+            it.foreground = MUTED
+            it.background = SURFACE
+            it.isOpaque = false
+            it.isEditable = false
+            it.lineWrap = true
+            it.wrapStyleWord = true
+            it.border = EmptyBorder(0, 0, 0, 0)
+            it.alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val text = JPanel().also {
+            it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
+            it.background = SURFACE
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            it.add(title)
+            it.add(Box.createVerticalStrut(4))
+            it.add(summary)
+        }
+        val left = JPanel(BorderLayout(12, 0)).also {
+            it.background = SURFACE
+            it.add(icon, BorderLayout.WEST)
+            it.add(text, BorderLayout.CENTER)
+        }
+        val right = JPanel(GridBagLayout()).also {
+            it.background = SURFACE
+            it.preferredSize = Dimension(88, 42)
+            it.minimumSize = it.preferredSize
+            it.add(codeforcesPluginToggleButton)
+        }
+        return JPanel(BorderLayout(12, 0)).also {
+            it.background = SURFACE
+            it.border = CompoundBorder(
+                MatteBorder(1, 1, 1, 1, BORDER),
+                EmptyBorder(12, 12, 12, 12),
+            )
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            it.add(left, BorderLayout.CENTER)
+            it.add(right, BorderLayout.EAST)
+            val preferred = it.preferredSize
+            it.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
+            refreshCodeforcesPluginUi()
+        }
+    }
+
+    private fun toggleCodeforcesSubmitPlugin() {
+        val state = CphPluginSettings.getInstance().state
+        state.codeforcesRemoteSubmitEnabled = !state.codeforcesRemoteSubmitEnabled
+        refreshCodeforcesPluginUi()
+        rebuildSettingsGrid()
+        refreshSubmitFeatureVisibility()
+        refreshSubmitButtonTooltip()
+        updateActions()
+    }
+
+    private fun refreshCodeforcesPluginUi() {
+        val enabled = isCodeforcesSubmitPluginEnabled()
+        codeforcesPluginToggleButton.text = if (enabled) "禁用" else "启用"
+        codeforcesPluginToggleButton.toolTipText = if (enabled) {
+            "Disable Codeforces remote submit"
+        } else {
+            "Enable Codeforces remote submit"
+        }
+        codeforcesPluginToggleButton.foreground = if (enabled) BAD else GOOD
+        codeforcesPluginToggleButton.background = SURFACE
+        codeforcesPluginToggleButton.isOpaque = false
+        codeforcesPluginToggleButton.isContentAreaFilled = false
+        codeforcesPluginToggleButton.isBorderPainted = true
+        codeforcesPluginToggleButton.isFocusPainted = false
     }
 
     private fun buildSettingsReturnHint(): JComponent {
@@ -793,8 +980,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun toggleSettingsPanel() {
         settingsVisible = !settingsVisible
         if (settingsVisible) {
+            pluginsVisible = false
+        }
+        if (settingsVisible) {
             showSettingsReturnHintOnce()
         } else {
+            settingsReturnHintPanel.isVisible = false
+        }
+        showActiveView()
+    }
+
+    private fun togglePluginsPanel() {
+        pluginsVisible = !pluginsVisible
+        if (pluginsVisible) {
+            settingsVisible = false
             settingsReturnHintPanel.isVisible = false
         }
         showActiveView()
@@ -810,12 +1009,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun showActiveView() {
-        (contentCards.layout as? CardLayout)?.show(
-            contentCards,
-            if (settingsVisible) SETTINGS_VIEW_CARD else MAIN_VIEW_CARD,
-        )
+        val card = when {
+            pluginsVisible -> PLUGINS_VIEW_CARD
+            settingsVisible -> SETTINGS_VIEW_CARD
+            else -> MAIN_VIEW_CARD
+        }
+        (contentCards.layout as? CardLayout)?.show(contentCards, card)
         settingsButton.toolTipText = if (settingsVisible) "Hide settings" else "Settings"
         refreshToolbarIconButton(settingsButton, if (settingsVisible) RUN else TEXT)
+        pluginButton.toolTipText = if (pluginsVisible) "Hide plugins" else "Plugin"
+        refreshPluginButton()
         contentCards.revalidate()
         contentCards.repaint()
     }
@@ -915,7 +1118,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             debugSelectedCaseShortcut = debugSelectedCaseShortcutField.shortcutText,
             submitShortcut = submitShortcutField.shortcutText,
         )
-        val duplicateMessage = CphShortcutMatcher.duplicateShortcutMessage(nextState)
+        val duplicateMessage = CphShortcutMatcher.duplicateShortcutMessage(
+            nextState,
+            codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled(),
+        )
         if (duplicateMessage != null) {
             StatusBar.Info.set("CPH shortcut settings: $duplicateMessage", project)
             return
@@ -1407,7 +1613,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val testCase = CphTestCase(name = "Case $index")
         currentTargetCases.cases.add(testCase)
         refreshTabs()
-        selectCase(testCase)
+        selectCase(testCase, reveal = false)
         updateActions()
     }
 
@@ -1511,7 +1717,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val timeoutMillis = currentTargetCases.timeoutMillis
         val ignoreTrailing = currentTargetCases.ignoreTrailingWhitespace
         val noExpectedMode = stateService.getState().ui.noExpectedModeEnabled
-        val shouldAutoSubmitOnAllAccepted = stateService.getState().ui.confidentSubmitEnabled &&
+        val shouldAutoSubmitOnAllAccepted = isCodeforcesSubmitPluginEnabled() &&
+            stateService.getState().ui.confidentSubmitEnabled &&
             stateService.getState().singleFileModeEnabled &&
             source == ActiveRunButton.RUN_ALL
         var completedAllCases = false
@@ -1713,14 +1920,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshTabs()
     }
 
-    private fun selectCase(testCase: CphTestCase?) {
+    private fun selectCase(testCase: CphTestCase?, reveal: Boolean = true) {
         if (selectedCase?.id != testCase?.id) {
             flushSelectedCase()
         }
         selectedCase = testCase
         renderSelectedCase()
-        refreshTabs()
-        testCase?.id?.let { id ->
+        refreshTabs {
+            if (reveal) revealCaseTab(testCase?.id)
+        }
+    }
+
+    private fun revealCaseTab(caseId: String?) {
+        caseId?.let { id ->
             caseTabComponents[id]?.let { tab ->
                 tab.scrollRectToVisible(Rectangle(0, 0, tab.width.coerceAtLeast(1), tab.height.coerceAtLeast(1)))
             }
@@ -1773,7 +1985,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
-    private fun refreshTabs() {
+    private fun refreshTabs(afterLayout: (() -> Unit)? = null) {
+        val scrollSnapshot = captureTabHorizontalScroll()
         tabStrip.removeAll()
         caseTabComponents.clear()
         currentTargetCases.cases.forEachIndexed { index, testCase ->
@@ -1785,6 +1998,31 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         tabStrip.add(Box.createHorizontalGlue())
         tabStrip.revalidate()
         tabStrip.repaint()
+        restoreTabHorizontalScroll(scrollSnapshot)
+        afterLayout?.invoke()
+        SwingUtilities.invokeLater {
+            restoreTabHorizontalScroll(scrollSnapshot)
+            afterLayout?.invoke()
+        }
+    }
+
+    private fun captureTabHorizontalScroll(): TabHorizontalScrollSnapshot {
+        val scrollBar = tabScrollPane.horizontalScrollBar
+        val maxValue = (scrollBar.maximum - scrollBar.visibleAmount).coerceAtLeast(scrollBar.minimum)
+        return TabHorizontalScrollSnapshot(
+            value = scrollBar.value,
+            atEnd = maxValue > scrollBar.minimum && scrollBar.value >= maxValue - 1,
+        )
+    }
+
+    private fun restoreTabHorizontalScroll(snapshot: TabHorizontalScrollSnapshot) {
+        val scrollBar = tabScrollPane.horizontalScrollBar
+        val maxValue = (scrollBar.maximum - scrollBar.visibleAmount).coerceAtLeast(scrollBar.minimum)
+        scrollBar.value = if (snapshot.atEnd) {
+            maxValue
+        } else {
+            snapshot.value.coerceIn(scrollBar.minimum, maxValue)
+        }
     }
 
     private fun statusFor(testCase: CphTestCase): TabStatus {
@@ -1812,7 +2050,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val runnable = currentIdentity.runnable && !running
         val runAllActive = activeRunButton == ActiveRunButton.RUN_ALL
         val runSelectedActive = activeRunButton == ActiveRunButton.RUN_SELECTED
+        val codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled()
         settingsButton.isEnabled = !running
+        pluginButton.isEnabled = !running
         runSelectedCaseButton.isEnabled = (selectedCase != null && runnable) || runSelectedActive
         debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
             currentIdentity.runnable &&
@@ -1822,7 +2062,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         timeoutSpinner.isEnabled = !running
         editorFontSizeSpinner.isEnabled = !running
         noExpectedModeEnabled.isEnabled = !running
-        confidentSubmitEnabled.isEnabled = !running && stateService.getState().singleFileModeEnabled
+        confidentSubmitEnabled.isEnabled = codeforcesSubmitEnabled && !running && stateService.getState().singleFileModeEnabled
         ignoreTrailingWhitespace.isEnabled = !running
         outputSplitEnabled.isEnabled = !running && !stateService.getState().ui.noExpectedModeEnabled
         cppStandardCombo.isEnabled = !running
@@ -1832,6 +2072,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshToolbarIconButton(settingsButton, if (settingsVisible) RUN else TEXT)
         refreshToolbarIconButton(resetCasesButton, TEXT)
         refreshToolbarIconButton(helpButton, TEXT)
+        refreshPluginButton()
+        refreshSubmitFeatureVisibility()
         refreshRunActionButtons()
     }
 
@@ -2066,6 +2308,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private data class TabHorizontalScrollSnapshot(
+        val value: Int,
+        val atEnd: Boolean,
+    )
+
     private enum class RuntimeTabState {
         QUEUED,
         RUNNING,
@@ -2115,6 +2362,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private val DIFF_LINE_PAINTER = LineBackgroundPainter(DIFF_BACKGROUND)
         private const val MAIN_VIEW_CARD = "main"
         private const val SETTINGS_VIEW_CARD = "settings"
+        private const val PLUGINS_VIEW_CARD = "plugins"
         private const val RESIZE_HANDLE_HEIGHT = 8
         private const val OUTPUT_DIVIDER_SIZE = 6
         private const val TAB_STRIP_BASE_HEIGHT = 62

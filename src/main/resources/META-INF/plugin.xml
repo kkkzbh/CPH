@@ -28,11 +28,11 @@
         <projectService serviceImplementation="org.kkkzbh.cph.CphCppFileBuildCache" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphShortcutDispatcher" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphSingleFileModeService" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.CphPluginSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphImportSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphCompetitiveCompanionServer" />
         <applicationService serviceImplementation="org.kkkzbh.cph.submit.CphActiveTabService" />
-        <applicationService serviceImplementation="org.kkkzbh.cph.submit.CphSubmitSettings" />
         <projectService serviceImplementation="org.kkkzbh.cph.submit.CphSubmitOrchestrator" />
         <applicationConfigurable parentId="tools"
                                  id="org.kkkzbh.cph.settings"

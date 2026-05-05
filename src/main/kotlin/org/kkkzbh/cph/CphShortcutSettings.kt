@@ -35,9 +35,10 @@ internal object CphShortcutMatcher {
         keyStroke: KeyStroke?,
         state: CphShortcutSettingsState,
         fromShortcutInput: Boolean,
+        codeforcesSubmitEnabled: Boolean = true,
     ): CphShortcutAction? {
         if (fromShortcutInput || keyStroke == null) return null
-        return configuredShortcuts(state).firstOrNull { it.second == keyStroke }?.first
+        return configuredShortcuts(state, codeforcesSubmitEnabled).firstOrNull { it.second == keyStroke }?.first
     }
 
     fun keyStrokeFromEvent(event: KeyEvent): KeyStroke? {
@@ -84,8 +85,11 @@ internal object CphShortcutMatcher {
         return KeymapUtil.getKeystrokeText(keyStroke)
     }
 
-    fun duplicateShortcutMessage(state: CphShortcutSettingsState): String? {
-        val duplicates = rawShortcutEntries(state)
+    fun duplicateShortcutMessage(
+        state: CphShortcutSettingsState,
+        codeforcesSubmitEnabled: Boolean = true,
+    ): String? {
+        val duplicates = rawShortcutEntries(state, codeforcesSubmitEnabled)
             .filter { it.second.isNotBlank() }
             .groupBy { normalizeShortcutText(it.second) }
             .filterKeys { it.isNotBlank() }
@@ -97,19 +101,25 @@ internal object CphShortcutMatcher {
         return "$names 使用了相同快捷键：${displayShortcut(duplicates.first().second)}"
     }
 
-    private fun configuredShortcuts(state: CphShortcutSettingsState): List<Pair<CphShortcutAction, KeyStroke>> {
-        return rawShortcutEntries(state).mapNotNull { (action, text) ->
+    private fun configuredShortcuts(
+        state: CphShortcutSettingsState,
+        codeforcesSubmitEnabled: Boolean,
+    ): List<Pair<CphShortcutAction, KeyStroke>> {
+        return rawShortcutEntries(state, codeforcesSubmitEnabled).mapNotNull { (action, text) ->
             parseShortcut(text)?.let { action to it }
         }
     }
 
-    private fun rawShortcutEntries(state: CphShortcutSettingsState): List<Pair<CphShortcutAction, String>> {
+    private fun rawShortcutEntries(
+        state: CphShortcutSettingsState,
+        codeforcesSubmitEnabled: Boolean = true,
+    ): List<Pair<CphShortcutAction, String>> {
         return listOf(
             CphShortcutAction.RUN_ALL to state.runAllShortcut,
             CphShortcutAction.RUN_SELECTED_CASE to state.runSelectedCaseShortcut,
             CphShortcutAction.DEBUG_SELECTED_CASE to state.debugSelectedCaseShortcut,
             CphShortcutAction.SUBMIT to state.submitShortcut,
-        )
+        ).filter { (action, _) -> action != CphShortcutAction.SUBMIT || codeforcesSubmitEnabled }
     }
 
     fun isModifierKeyCode(keyCode: Int): Boolean {

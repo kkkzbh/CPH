@@ -39,6 +39,7 @@ internal class CphShortcutDispatcher(private val project: Project) : Disposable 
             keyStroke = CphShortcutMatcher.keyStrokeFromEvent(event),
             state = CphShortcutSettings.getInstance().state,
             fromShortcutInput = false,
+            codeforcesSubmitEnabled = CphCodeforcesSubmitFeature.isEnabled(),
         ) ?: return false
 
         event.consume()

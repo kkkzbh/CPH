@@ -92,7 +92,7 @@ problems/${source}/${contest}/${index}-${slug}.cpp
 
 1. 安装 **CPH Target Runner** 浏览器扩展（用于把当前活动 Tab URL 推给 IDE）：见 [INSTALL_EXTENSION.md](INSTALL_EXTENSION.md)。
 2. 在浏览器中登录 Codeforces，并打开要提交的题面 Tab。
-3. 打开 `Settings / Tools / CPH Target Runner` → "Codeforces 一键提交" 段，选择 **Language**（C++17 / C++20 / C++23）。
+3. 在 CPH 工具窗的 `C++ 标准` 中选择本地使用的标准；提交语言会自动跟随该标准，超过 Codeforces 当前支持上限时使用 GNU G++23。
 
 ### 使用
 

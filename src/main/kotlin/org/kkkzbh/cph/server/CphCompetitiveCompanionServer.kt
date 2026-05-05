@@ -9,6 +9,7 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.IdeFocusManager
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import org.kkkzbh.cph.submit.CphActiveTabService
 import org.kkkzbh.cph.submit.CphSubmitBridgeUpdate
 import org.kkkzbh.cph.submit.CphSubmitOrchestrator
@@ -150,6 +151,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
     }
 
     private fun handleSubmitNow(exchange: HttpExchange) {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) {
+            respond(exchange, 403, "Codeforces remote submit plugin is disabled")
+            return
+        }
         val body = exchange.requestBody.use { it.readAllBytes() }
             .toString(StandardCharsets.UTF_8)
         val parsed = CphActiveTabPayload.parse(body)
@@ -169,6 +174,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
     }
 
     private fun handleSubmitPoll(exchange: HttpExchange) {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) {
+            respond(exchange, 403, "Codeforces remote submit plugin is disabled")
+            return
+        }
         val body = exchange.requestBody.use { it.readAllBytes() }
             .toString(StandardCharsets.UTF_8)
         val parsed = CphActiveTabPayload.parse(body)
@@ -197,6 +206,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
     }
 
     private fun handleSubmitUpdate(exchange: HttpExchange) {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) {
+            respond(exchange, 403, "Codeforces remote submit plugin is disabled")
+            return
+        }
         val body = exchange.requestBody.use { it.readAllBytes() }
             .toString(StandardCharsets.UTF_8)
         val update = CphSubmitBridgeUpdate.parse(body)

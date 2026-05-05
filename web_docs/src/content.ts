@@ -149,7 +149,7 @@ CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到
 
 1. 安装 **CPH Target Runner** 浏览器扩展：[安装说明](https://github.com/kkkzbh/CPH/blob/main/INSTALL_EXTENSION.md)。
 2. 在同一个浏览器里登录 Codeforces。
-3. 打开 **Settings / Tools / CPH Target Runner**，在 **Codeforces 一键提交** 里选择 **Language**。
+3. 在 CPH 工具窗的 **C++ 标准** 中选择本地使用的标准；提交语言会自动跟随该标准，超过 Codeforces 当前支持上限时使用 GNU G++23。
 
 ## 提交一题
 

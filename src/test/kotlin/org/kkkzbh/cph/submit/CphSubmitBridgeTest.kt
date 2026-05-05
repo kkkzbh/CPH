@@ -1,6 +1,7 @@
 package org.kkkzbh.cph.submit
 
 import com.google.gson.JsonParser
+import org.kkkzbh.cph.CphCppStandard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -38,9 +39,20 @@ class CphSubmitBridgeTest {
 
     @Test
     fun codeforcesLanguageIdsMatchCurrentSubmitCodeOptions() {
+        assertEquals(42, CphCfLanguage.CPP_11.defaultProgramTypeId)
         assertEquals(54, CphCfLanguage.CPP_17.defaultProgramTypeId)
         assertEquals(89, CphCfLanguage.CPP_20.defaultProgramTypeId)
         assertEquals(91, CphCfLanguage.CPP_23.defaultProgramTypeId)
+    }
+
+    @Test
+    fun codeforcesLanguageFollowsCphCppStandardWithCurrentCfCeiling() {
+        assertEquals(CphCfLanguage.CPP_23, CphCfLanguage.fromCppStandard(CphCppStandard.FOLLOW_TARGET))
+        assertEquals(CphCfLanguage.CPP_11, CphCfLanguage.fromCppStandard(CphCppStandard.CPP11))
+        assertEquals(CphCfLanguage.CPP_17, CphCfLanguage.fromCppStandard(CphCppStandard.CPP17))
+        assertEquals(CphCfLanguage.CPP_20, CphCfLanguage.fromCppStandard(CphCppStandard.CPP20))
+        assertEquals(CphCfLanguage.CPP_23, CphCfLanguage.fromCppStandard(CphCppStandard.CPP23))
+        assertEquals(CphCfLanguage.CPP_23, CphCfLanguage.fromCppStandard(CphCppStandard.CPP26))
     }
 
     @Test

@@ -6,13 +6,14 @@ import com.google.gson.JsonSyntaxException
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.runReadAction
+import com.intellij.openapi.application.runReadActionBlocking
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import org.kkkzbh.cph.CphStateService
 import java.util.UUID
 
@@ -87,6 +88,10 @@ internal class CphSubmitOrchestrator(private val project: Project) {
     private var activeJob: CphSubmitBridgeJob? = null
 
     fun submit() {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) {
+            publishIdle()
+            return
+        }
         synchronized(lock) {
             if (activeJob != null || pendingJob != null) {
                 balloon("A submission is already in flight.", NotificationType.WARNING)
@@ -125,7 +130,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             val job = CphSubmitBridgeJob(
                 jobId = UUID.randomUUID().toString(),
                 context = ctx,
-                programTypeId = CphSubmitSettings.getInstance().language().defaultProgramTypeId,
+                programTypeId = submitLanguage().defaultProgramTypeId,
                 source = source,
             )
             synchronized(lock) {
@@ -146,6 +151,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
     }
 
     fun pollSubmitJob(tab: CphActiveTab): CphSubmitBridgeJob? {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) return null
         val ctx = CphSubmitContextResolver.resolve(tab.url) ?: return null
         val job = synchronized(lock) {
             val pending = pendingJob ?: return@synchronized null
@@ -164,6 +170,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
     }
 
     fun applyBridgeUpdate(update: CphSubmitBridgeUpdate): Boolean {
+        if (!CphCodeforcesSubmitFeature.isEnabled()) return false
         val job = synchronized(lock) {
             val active = activeJob ?: return false
             if (active.jobId != update.jobId) return false
@@ -272,13 +279,11 @@ internal class CphSubmitOrchestrator(private val project: Project) {
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun currentSourceFile(): VirtualFile? =
-        runReadAction { FileEditorManager.getInstance(project).selectedFiles.firstOrNull() }
+        runReadActionBlocking { FileEditorManager.getInstance(project).selectedFiles.firstOrNull() }
 
-    @Suppress("DEPRECATION")
     private fun readSource(file: VirtualFile): String =
-        runReadAction {
+        runReadActionBlocking {
             val doc = FileDocumentManager.getInstance().getDocument(file)
             doc?.text ?: String(file.contentsToByteArray(), Charsets.UTF_8)
         }
@@ -286,6 +291,11 @@ internal class CphSubmitOrchestrator(private val project: Project) {
     private fun isSupportedSource(file: VirtualFile): Boolean {
         val ext = file.extension?.lowercase() ?: return false
         return ext in CPP_EXTS
+    }
+
+    private fun submitLanguage(): CphCfLanguage {
+        val standard = CphStateService.getInstance(project).state.compileSettings.cppStandard
+        return CphCfLanguage.fromCppStandard(standard)
     }
 
     private fun CphSubmissionPhase.isTerminal(): Boolean =

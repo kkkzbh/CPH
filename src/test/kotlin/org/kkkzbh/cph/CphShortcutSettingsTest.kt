@@ -106,6 +106,39 @@ class CphShortcutSettingsTest {
     }
 
     @Test
+    fun disabledSubmitPluginDoesNotMatchSubmitShortcut() {
+        val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK)
+        val state = CphShortcutSettingsState(
+            submitShortcut = CphShortcutMatcher.toStorageString(keyStroke),
+        )
+
+        assertNull(
+            CphShortcutMatcher.actionFor(
+                keyStroke,
+                state,
+                fromShortcutInput = false,
+                codeforcesSubmitEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun disabledSubmitPluginIgnoresSubmitShortcutDuplicates() {
+        val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK)
+        val stored = CphShortcutMatcher.toStorageString(keyStroke)
+
+        val message = CphShortcutMatcher.duplicateShortcutMessage(
+            CphShortcutSettingsState(
+                runAllShortcut = stored,
+                submitShortcut = stored,
+            ),
+            codeforcesSubmitEnabled = false,
+        )
+
+        assertNull(message)
+    }
+
+    @Test
     fun unmatchedShortcutDoesNotIntercept() {
         val state = CphShortcutSettingsState(
             runAllShortcut = CphShortcutMatcher.toStorageString(
