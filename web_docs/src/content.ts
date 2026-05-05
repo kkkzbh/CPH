@@ -52,6 +52,15 @@ export const docPages: DocPage[] = [
 
 ## 准备浏览器扩展
 
+<div class="download-card">
+  <div class="download-card-icon download-card-icon-text" aria-hidden="true">CC</div>
+  <div class="download-card-body">
+    <strong>Competitive Companion</strong>
+    <span>从 Chrome 应用商店安装后，一键把题面样例发送到 CPH。</span>
+  </div>
+  <a class="download-card-button" href="https://chromewebstore.google.com/detail/competitive-companion/cjnmckjndlpiamhfimnnjmnckgghkjbl">打开商店</a>
+</div>
+
 1. 在 Chrome / Chromium 浏览器中安装 **Competitive Companion**。
 2. 打开扩展设置，确认 Custom ports 中包含 **10043**。
 3. 打开 CLion 项目，并确保 CPH 接收服务处于启用状态。

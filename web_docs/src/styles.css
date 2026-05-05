@@ -400,6 +400,15 @@ pre {
   height: 40px;
 }
 
+.download-card-icon-text {
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+  background: var(--accent-strong);
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22);
+}
+
 .download-card-body {
   min-width: 0;
 }
