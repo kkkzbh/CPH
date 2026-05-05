@@ -8,11 +8,11 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Add Codeforces quick submit through the CPH Target Runner browser extension and the active Codeforces problem tab.</li>
-          <li>Remove the built-in submit shortcut; Submit to Codeforces now uses a configurable CPH shortcut that is unset by default.</li>
-          <li>Add Confident Mode, which can automatically submit after Run All finishes with every enabled case accepted locally.</li>
-          <li>Package the browser extension as a GitHub Release asset and add a download card in the online quick-submit guide.</li>
-          <li>Translate and simplify the browser extension installation guide.</li>
+          <li>Add a plugin-level enable switch for Codeforces remote submit, disabled by default.</li>
+          <li>Require single-file mode before Codeforces submit can run, so target-based projects cannot submit the wrong file accidentally.</li>
+          <li>Make Codeforces submit language follow the tool window C++ standard setting, using GNU G++23 when the selected standard is newer than Codeforces supports.</li>
+          <li>Move Codeforces submit controls into the unified CPH Target Runner settings panel.</li>
+          <li>Replace deprecated read actions with the CLion 2026.1 compatible blocking read API.</li>
         </ul>
     ]]></change-notes>
 
