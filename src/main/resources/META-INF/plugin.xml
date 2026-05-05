@@ -8,14 +8,11 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Add Competitive Companion import support with configurable source path templates.</li>
-          <li>Add pure single-file mode that automatically follows the focused .cpp file and selects or creates its CLion C/C++ File run target.</li>
-          <li>Add editor font-size controls with Ctrl+mouse-wheel zooming for CPH input and output editors.</li>
-          <li>Add no-Expected mode for output-only runs with OK/ERR status display.</li>
-          <li>Add compile option and C++ standard settings for generated single-file runs.</li>
-          <li>Add configurable CPH-priority shortcuts for Run All, selected case Run, and selected case Debug.</li>
-          <li>Compact the CPH tool-window settings panel and improve shortcut capture behavior.</li>
-          <li>Support selected-case Debug for CMake Application and C/C++ File targets with CLion-native error reporting.</li>
+          <li>Add Codeforces quick submit through the CPH Target Runner browser extension and the active Codeforces problem tab.</li>
+          <li>Remove the built-in submit shortcut; Submit to Codeforces now uses a configurable CPH shortcut that is unset by default.</li>
+          <li>Add Confident Mode, which can automatically submit after Run All finishes with every enabled case accepted locally.</li>
+          <li>Package the browser extension as a GitHub Release asset and add a download card in the online quick-submit guide.</li>
+          <li>Translate and simplify the browser extension installation guide.</li>
         </ul>
     ]]></change-notes>
 

@@ -94,6 +94,32 @@ jobs:
             exit 1
           fi
 
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          before = os.environ["BEFORE_SHA"]
+          path = "src/main/resources/META-INF/plugin.xml"
+
+          def read_at(ref: str) -> str:
+              return subprocess.check_output(["git", "show", f"{ref}:{path}"], text=True)
+
+          def change_notes(text: str) -> str:
+              match = re.search(r"<change-notes><!\[CDATA\[(.*?)\]\]></change-notes>", text, re.S)
+              if not match:
+                  print(f"::error::{path} has no <change-notes> CDATA block.")
+                  sys.exit(1)
+              return "\n".join(line.strip() for line in match.group(1).strip().splitlines() if line.strip())
+
+          old_notes = change_notes(read_at(before))
+          new_notes = change_notes(open(path, encoding="utf-8").read())
+          if old_notes == new_notes:
+              print("::error::pluginVersion changed, but <change-notes> was not updated. Write real What's New notes for this release.")
+              sys.exit(1)
+          PY
+
       - name: Run tests and build plugin
         run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension
 
