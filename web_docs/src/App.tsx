@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   Clipboard,
   ClipboardCheck,
-  Command,
   Menu,
   PanelLeft,
   Play,
@@ -255,7 +254,7 @@ function App() {
         <aside className={`left-nav ${navOpen ? "is-open" : ""}`}>
           <a className="sidebar-brand" href="#/">
             <span className="sidebar-brand-mark">
-              <Command size={16} />
+              <img src="/assets/plugin-icon.png" alt="" />
             </span>
             <span className="sidebar-brand-text">CPH Docs</span>
           </a>
