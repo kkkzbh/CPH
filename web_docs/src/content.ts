@@ -142,7 +142,7 @@ CPH 工具窗顶部的 📤 按钮会把当前编辑器里的 \`.cpp\` 提交到
     <strong>浏览器扩展</strong>
     <span>Chrome / Edge / Brave 加载这个压缩包，配合当前浏览器登录态提交 Codeforces。</span>
   </div>
-  <a class="download-card-button" href="https://github.com/kkkzbh/CPH/releases/download/v1.0.10/cph-target-runner-browser-1.0.0.zip" download>下载扩展</a>
+  <a class="download-card-button" href="https://github.com/kkkzbh/CPH/releases/download/v1.1.0/cph-target-runner-browser-1.0.1.zip" download>下载扩展</a>
 </div>
 
 ## 一次性配置

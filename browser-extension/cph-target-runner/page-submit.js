@@ -20,6 +20,8 @@
       });
   });
 
+  root.CphPageSubmit = { run };
+
   async function run(job) {
     if (!/\/submit(?:[?#]|$)/.test(root.location.pathname + root.location.search)) {
       throw new Error("CPH Target Runner must run on the Codeforces Submit Code page");
@@ -37,8 +39,8 @@
     const debug = await fillSubmitCodeForm(form, job);
     root.postMessage({ type: "CPH_SUBMIT_PROGRESS", debug }, "*");
 
-    const button = findSubmitButton(form);
-    setTimeout(() => submitForm(form, button), 30);
+    const button = await waitForSubmitButtonReady(form);
+    submitForm(form, button);
     return {
       handle,
       beforeMaxId,
@@ -85,11 +87,6 @@
     if (form.elements._tta && root.Codeforces && typeof root.Codeforces.tta === "function") {
       setField(form, "_tta", root.Codeforces.tta(), false);
     }
-
-    await sleep(80);
-    const button = findSubmitButton(form);
-    if (!button) throw new Error("could not find the Submit Code button");
-    if (button.disabled) throw new Error("Codeforces Submit Code button is disabled after filling the form");
 
     return [
       `Submit Code page ready`,
@@ -161,11 +158,25 @@
     return form.querySelector("#singlePageSubmitButton, input[type='submit'], button[type='submit']");
   }
 
+  async function waitForSubmitButtonReady(form) {
+    const started = Date.now();
+    let button = findSubmitButton(form);
+    while (!button || button.disabled) {
+      if (Date.now() - started > 5000) {
+        if (!button) throw new Error("could not find the Submit Code button");
+        throw new Error("Codeforces Submit Code button is still disabled after filling the form");
+      }
+      await sleep(50);
+      button = findSubmitButton(form);
+    }
+    return button;
+  }
+
   function submitForm(form, button) {
-    if (typeof form.requestSubmit === "function") {
-      form.requestSubmit(button || undefined);
-    } else if (button && typeof button.click === "function") {
+    if (button && typeof button.click === "function") {
       button.click();
+    } else if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
     } else {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       form.submit();

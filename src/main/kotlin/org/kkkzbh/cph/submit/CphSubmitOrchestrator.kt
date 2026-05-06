@@ -156,7 +156,6 @@ internal class CphSubmitOrchestrator(private val project: Project) {
         val job = synchronized(lock) {
             val pending = pendingJob ?: return@synchronized null
             if (!sameProblem(pending.context, ctx)) return@synchronized null
-            pendingJob = null
             pending
         } ?: return null
         publish(
@@ -174,9 +173,9 @@ internal class CphSubmitOrchestrator(private val project: Project) {
         val job = synchronized(lock) {
             val active = activeJob ?: return false
             if (active.jobId != update.jobId) return false
+            pendingJob = null
             if (update.phase.isTerminal()) {
                 activeJob = null
-                pendingJob = null
             }
             active
         }

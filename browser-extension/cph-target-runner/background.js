@@ -137,69 +137,72 @@ async function submitInCodeforcesPage(problemTab, job, port) {
   const submitTab = await openSubmitTab(problemTab, job.submitPageUrl);
   const tabId = submitTab.id;
   await sendUpdate(port, job, "SUBMITTING", `→ ${job.displayId}  Filling Submit Code form…`);
+  const handle = await detectCurrentHandle(tabId);
+  if (!handle) throw new Error("could not detect the logged-in Codeforces handle");
+  const beforeMaxId = await latestSubmissionId(handle);
+  const startedAtSeconds = Math.floor(Date.now() / 1000);
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["submit-core.js", "page-submit.js"],
     world: "MAIN",
   });
-  const results = await chrome.scripting.executeScript({
+  await chrome.scripting.executeScript({
     target: { tabId },
-    func: (submitJob) => new Promise((resolve, reject) => {
-      const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const timer = setTimeout(() => {
-        window.removeEventListener("message", onMessage);
-        reject(new Error("Codeforces page submit timed out"));
-      }, 45000);
-      function onMessage(event) {
-        if (event.source !== window) return;
-        const msg = event.data;
-        if (msg && msg.type === "CPH_SUBMIT_PROGRESS" && msg.debug) {
-          console.info(`[CPH Target Runner] ${msg.debug}`);
-          fetch(`http://127.0.0.1:${submitJob.__cphPort}/cph/submit/update`, {
-            method: "POST",
-            headers: { "Content-Type": "text/plain;charset=UTF-8" },
-            body: JSON.stringify({
-              jobId: submitJob.jobId,
-              phase: "RUNNING",
-              text: `→ ${submitJob.displayId}  ${msg.debug}`,
-            }),
-          }).catch(() => {});
-          return;
-        }
-        if (!msg || msg.type !== "CPH_SUBMIT_RESULT" || msg.requestId !== requestId) return;
-        clearTimeout(timer);
-        window.removeEventListener("message", onMessage);
-        if (msg.ok) {
-          resolve(msg.result);
-        } else {
-          reject(new Error(msg.error || "Codeforces page submit failed"));
-        }
+    world: "MAIN",
+    func: (submitJob) => {
+      if (!globalThis.CphPageSubmit || typeof globalThis.CphPageSubmit.run !== "function") {
+        throw new Error("Codeforces Submit Code page helper did not install");
       }
-      window.addEventListener("message", onMessage);
-      window.postMessage({ type: "CPH_SUBMIT_JOB", requestId, job: submitJob }, "*");
-    }),
+      globalThis.CphPageSubmit.run(submitJob).catch((err) => {
+        console.error("[CPH Target Runner] Codeforces page submit failed", err);
+      });
+      return true;
+    },
     args: [{ ...job, __cphPort: port }],
   });
-  const result = results && results[0] && results[0].result;
-  if (!result || !result.handle) {
-    throw new Error("Codeforces Submit Code page did not start submission");
-  }
   await sendUpdate(port, job, "SUBMITTING", `→ ${job.displayId}  Submit request sent; waiting for Codeforces id…`);
   const submission = await waitForNewSubmission(
-    result.handle,
+    handle,
     job,
-    Number(result.beforeMaxId || 0),
-    Number(result.startedAtSeconds || 0),
+    beforeMaxId,
+    startedAtSeconds,
+    tabId,
   );
   if (!submission) {
     const pageError = await readSubmitPageError(tabId);
     throw new Error(pageError || "Codeforces Submit Code page did not create a submission");
   }
   return {
-    handle: result.handle,
+    handle,
     submissionId: submission.id,
     pageUrl: CphSubmitCore.submissionPageUrl(submission),
   };
+}
+
+async function detectCurrentHandle(tabId) {
+  const fromHome = CphSubmitCore.extractHandle(await fetchCodeforcesHome());
+  if (fromHome) return fromHome;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => document.documentElement.outerHTML,
+    });
+    return CphSubmitCore.extractHandle(results && results[0] && results[0].result);
+  } catch (_) {
+    return "";
+  }
+}
+
+async function fetchCodeforcesHome() {
+  const resp = await cfFetch("https://codeforces.com/");
+  if (!resp.ok) return "";
+  return resp.text();
+}
+
+async function latestSubmissionId(handle) {
+  const arr = await fetchStatus(handle, 1);
+  const first = arr[0];
+  return first ? Number(first.id || 0) : 0;
 }
 
 function openSubmitTab(problemTab, url) {
@@ -259,9 +262,12 @@ function samePage(left, right) {
   }
 }
 
-async function waitForNewSubmission(handle, job, beforeMaxId, startedAtSeconds) {
+async function waitForNewSubmission(handle, job, beforeMaxId, startedAtSeconds, submitTabId) {
   const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
+    const pageError = await readSubmitPageError(submitTabId);
+    if (pageError) throw new Error(pageError);
+
     const arr = await fetchStatus(handle, 20);
     const submission = arr.find((item) =>
       Number(item.id || 0) > beforeMaxId &&
@@ -269,7 +275,11 @@ async function waitForNewSubmission(handle, job, beforeMaxId, startedAtSeconds) 
       CphSubmitCore.matchesSubmission(job, item)
     );
     if (submission) return submission;
-    await sleep(1000);
+
+    const latePageError = await readSubmitPageError(submitTabId);
+    if (latePageError) throw new Error(latePageError);
+
+    await sleep(500);
   }
   return null;
 }
