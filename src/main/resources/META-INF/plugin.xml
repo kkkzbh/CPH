@@ -8,11 +8,11 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Add a plugin-level enable switch for Codeforces remote submit, disabled by default.</li>
-          <li>Require single-file mode before Codeforces submit can run, so target-based projects cannot submit the wrong file accidentally.</li>
-          <li>Make Codeforces submit language follow the tool window C++ standard setting, using GNU G++23 when the selected standard is newer than Codeforces supports.</li>
-          <li>Move Codeforces submit controls into the unified CPH Target Runner settings panel.</li>
-          <li>Replace deprecated read actions with the CLion 2026.1 compatible blocking read API.</li>
+          <li>Run all sample cases in parallel after a single pre-build step, while keeping every pending case in the RUN state until its result is ready.</li>
+          <li>Preserve CMake and C/C++ File build caching, including correct rebuilds after unsaved editor changes are saved automatically before running.</li>
+          <li>Refresh the Ave Mujica theme with smoother flowing status glyphs, vertical gradients, generated toolbar art, and themed settings/help visuals.</li>
+          <li>Move plugin utilities and theme controls into a unified settings panel with dedicated tabs.</li>
+          <li>Bump the plugin release to 1.1.0.</li>
         </ul>
     ]]></change-notes>
 

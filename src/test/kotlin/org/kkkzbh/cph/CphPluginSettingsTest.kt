@@ -2,6 +2,7 @@ package org.kkkzbh.cph
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.awt.Color
@@ -103,15 +104,39 @@ class CphPluginSettingsTest {
         val palette = CphThemes.palette(CphThemeId.AVE_MUJICA)
 
         assertEquals("Ave Mujica", palette.displayName)
-        assertEquals(Color(0x140A11), palette.panel)
-        assertEquals(Color(0x20101A), palette.surface)
-        assertEquals(Color(0x5A2443), palette.border)
-        assertEquals(Color(0x779977), palette.good)
-        assertEquals(Color(0xBB9955), palette.run)
-        assertEquals(Color(0x3A1027), palette.actionHover)
-        assertEquals(Color(0x561538), palette.actionPressed)
-        assertEquals(Color(0x3A321C), palette.diff)
-        assertEquals(Color(0xD7B160), palette.warn)
+        assertEquals(Color(0x0E0D18), palette.panel)
+        assertEquals(Color(0x171528), palette.surface)
+        assertEquals(Color(0x4A5C8C), palette.border)
+        assertEquals(Color(0x7AAA94), palette.good)
+        assertEquals(Color(0x99A7C9), palette.run)
+        assertEquals(Color(0x1F1D38), palette.actionHover)
+        assertEquals(Color(0x36315E), palette.actionPressed)
+        assertEquals(Color(0x2A2A1E), palette.diff)
+        assertEquals(Color(0xD9B566), palette.warn)
+    }
+
+    @Test
+    fun aveMujicaStatusGlyphResourcesLoad() {
+        listOf("ac", "ok", "wa", "tle", "re", "err", "run").forEach { glyph ->
+            assertNotNull(
+                "missing Ave Mujica status glyph: $glyph",
+                CphPluginSettingsTest::class.java.getResource("/icons/avemujica/status/512/$glyph.png"),
+            )
+        }
+    }
+
+    @Test
+    fun aveMujicaHelpTextResourceLoads() {
+        assertNotNull(
+            CphPluginSettingsTest::class.java.getResource("/icons/avemujica/standalone/help_text.png"),
+        )
+    }
+
+    @Test
+    fun aveMujicaThemeTitleResourceLoads() {
+        assertNotNull(
+            CphPluginSettingsTest::class.java.getResource("/icons/avemujica/standalone/theme_title.png"),
+        )
     }
 
     @Test

@@ -65,10 +65,27 @@ internal class CphCppFileBuildCache {
     }
 }
 
+internal sealed class CphPreparedRunTarget {
+    data class CMakeExecutable(
+        val executable: File,
+        val workingDir: File,
+    ) : CphPreparedRunTarget()
+
+    data class CppFile(
+        val settings: com.intellij.execution.RunnerAndConfigurationSettings,
+    ) : CphPreparedRunTarget()
+}
+
+internal sealed class CphRunPreparation {
+    data class Ready(val target: CphPreparedRunTarget) : CphRunPreparation()
+    data class Failed(val result: CphCaseResult) : CphRunPreparation()
+}
+
 class CphRunner(private val project: Project) {
     private val log = Logger.getInstance(CphRunner::class.java)
     private val cppFileBuildCache = project.service<CphCppFileBuildCache>()
-    private val preparedBuilds = linkedSetOf<String>()
+    private val preparedBuilds = linkedMapOf<String, CphCaseResult?>()
+    private val cppFileBuildLock = Any()
 
     fun runCase(
         identity: CphTargetIdentity,
@@ -77,29 +94,70 @@ class CphRunner(private val project: Project) {
         ignoreTrailingWhitespace: Boolean,
         compareExpectedOutput: Boolean = true,
     ): CphCaseResult {
+        return when (val preparation = prepareForRun(identity)) {
+            is CphRunPreparation.Failed -> preparation.result
+            is CphRunPreparation.Ready -> runPreparedCase(
+                preparation.target,
+                testCase,
+                timeoutMillis,
+                ignoreTrailingWhitespace,
+                compareExpectedOutput,
+            )
+        }
+    }
+
+    internal fun prepareForRun(identity: CphTargetIdentity): CphRunPreparation {
         val settings = identity.settings
-            ?: return CphCaseResult(CphVerdict.ERROR, message = identity.message)
+            ?: return CphRunPreparation.Failed(CphCaseResult(CphVerdict.ERROR, message = identity.message))
         if (!identity.runnable) {
-            return CphCaseResult(CphVerdict.ERROR, message = identity.message)
+            return CphRunPreparation.Failed(CphCaseResult(CphVerdict.ERROR, message = identity.message))
         }
 
         return when (identity.kind) {
-            CphTargetKind.CMAKE_APP -> runExecutableFallback(
-                settings,
-                testCase,
-                timeoutMillis,
-                ignoreTrailingWhitespace,
-                compareExpectedOutput,
-                null,
+            CphTargetKind.CMAKE_APP -> prepareCMakeRunTarget(settings)
+            CphTargetKind.CPP_FILE -> prepareCppFileRunTarget(settings)
+            CphTargetKind.UNSUPPORTED -> CphRunPreparation.Failed(CphCaseResult(CphVerdict.ERROR, message = identity.message))
+        }
+    }
+
+    internal fun runPreparedCase(
+        target: CphPreparedRunTarget,
+        testCase: CphTestCase,
+        timeoutMillis: Long,
+        ignoreTrailingWhitespace: Boolean,
+        compareExpectedOutput: Boolean = true,
+    ): CphCaseResult {
+        val startedAt = System.nanoTime()
+        return try {
+            when (target) {
+                is CphPreparedRunTarget.CMakeExecutable -> runLocalExecutable(
+                    executable = target.executable,
+                    workingDir = target.workingDir,
+                    testCase = testCase,
+                    timeoutMillis = timeoutMillis,
+                    ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                    compareExpectedOutput = compareExpectedOutput,
+                    runnerLabel = "fallback executable runner",
+                )
+                is CphPreparedRunTarget.CppFile -> {
+                    val context = buildDefaultRunContext(target.settings)
+                    val commandLine = resolveCppFileCommandLine(target.settings, context.executor, context.environment)
+                    runCommandLine(
+                        commandLine = commandLine,
+                        testCase = testCase,
+                        timeoutMillis = timeoutMillis,
+                        ignoreTrailingWhitespace = ignoreTrailingWhitespace,
+                        compareExpectedOutput = compareExpectedOutput,
+                        runnerLabel = "CLion C/C++ File runner",
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            CphCaseResult(
+                verdict = CphVerdict.ERROR,
+                durationMillis = elapsedMillis(startedAt),
+                message = e.message ?: e.javaClass.simpleName,
             )
-            CphTargetKind.CPP_FILE -> runCppFileConfiguration(
-                settings,
-                testCase,
-                timeoutMillis,
-                ignoreTrailingWhitespace,
-                compareExpectedOutput,
-            )
-            CphTargetKind.UNSUPPORTED -> CphCaseResult(CphVerdict.ERROR, message = identity.message)
         }
     }
 
@@ -133,6 +191,58 @@ class CphRunner(private val project: Project) {
             ?: throw ExecutionException("No debugger runner is available for ${settings.name}.")
         val environment = buildEnvironment(debugSettings, runner, executor)
         ProgramRunnerUtil.executeConfiguration(environment, false, true)
+    }
+
+    private fun prepareCMakeRunTarget(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+    ): CphRunPreparation {
+        val setupStartedAt = System.nanoTime()
+        return try {
+            val launchPlan = resolveCMakeLaunchPlan(settings)
+                ?: throw ExecutionException("Cannot resolve executable for '${settings.name}'.")
+            val buildResult = prepareBuildTarget(settings, launchPlan)
+            if (buildResult != null) return CphRunPreparation.Failed(buildResult)
+
+            val executable = launchPlan.executable
+            if (!executable.isFile || !executable.canExecute()) {
+                throw ExecutionException("Executable is not ready: ${executable.absolutePath}")
+            }
+
+            CphRunPreparation.Ready(
+                CphPreparedRunTarget.CMakeExecutable(
+                    executable = executable,
+                    workingDir = File(project.basePath ?: executable.parentFile.absolutePath),
+                ),
+            )
+        } catch (e: Exception) {
+            CphRunPreparation.Failed(
+                CphCaseResult(
+                    verdict = CphVerdict.ERROR,
+                    durationMillis = elapsedMillis(setupStartedAt),
+                    message = e.message ?: e.javaClass.simpleName,
+                ),
+            )
+        }
+    }
+
+    private fun prepareCppFileRunTarget(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+    ): CphRunPreparation {
+        val setupStartedAt = System.nanoTime()
+        return try {
+            val context = buildDefaultRunContext(settings)
+            val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
+            if (buildResult != null) return CphRunPreparation.Failed(buildResult)
+            CphRunPreparation.Ready(CphPreparedRunTarget.CppFile(settings))
+        } catch (e: Exception) {
+            CphRunPreparation.Failed(
+                CphCaseResult(
+                    verdict = CphVerdict.ERROR,
+                    durationMillis = elapsedMillis(setupStartedAt),
+                    message = e.message ?: e.javaClass.simpleName,
+                ),
+            )
+        }
     }
 
     private fun runCppFileConfiguration(
@@ -349,8 +459,12 @@ class CphRunner(private val project: Project) {
     ): CphCaseResult? {
         val buildDir = launchPlan.buildWorkingDir ?: return null
         val key = listOf(buildDir.absolutePath, launchPlan.buildTargetName.orEmpty()).joinToString("|")
-        if (!preparedBuilds.add(key)) return null
-        return buildTarget(settings, launchPlan)
+        return synchronized(preparedBuilds) {
+            if (preparedBuilds.containsKey(key)) return@synchronized preparedBuilds[key]
+            val result = buildTarget(settings, launchPlan)
+            preparedBuilds[key] = result
+            result
+        }
     }
 
     private fun buildTarget(
@@ -438,6 +552,16 @@ class CphRunner(private val project: Project) {
     }
 
     private fun buildCppFileTarget(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        environment: ExecutionEnvironment,
+        startedAt: Long,
+    ): CphCaseResult? {
+        synchronized(cppFileBuildLock) {
+            return buildCppFileTargetLocked(settings, environment, startedAt)
+        }
+    }
+
+    private fun buildCppFileTargetLocked(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
         environment: ExecutionEnvironment,
         startedAt: Long,

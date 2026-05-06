@@ -34,6 +34,7 @@ import org.kkkzbh.cph.submit.CphSubmissionStatus
 import org.kkkzbh.cph.submit.CphSubmissionStatusListener
 import org.kkkzbh.cph.submit.CphSubmitContextResolver
 import org.kkkzbh.cph.submit.CphSubmitOrchestrator
+import java.awt.AlphaComposite
 import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
@@ -45,15 +46,22 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GradientPaint
 import java.awt.GraphicsEnvironment
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
 import java.awt.KeyboardFocusManager
+import java.awt.LinearGradientPaint
 import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.Shape
+import java.awt.TexturePaint
+import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.swing.BorderFactory
 import javax.swing.Box
@@ -203,12 +211,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var selectedCase: CphTestCase? = null
     private var running = false
     private var settingsVisible = false
-    private var pluginsVisible = false
-    private var activePluginTab = PluginTab.UTILITY
+    private var activeSettingsTab = SettingsPanelTab.SETTINGS
     private var pendingTargetRefresh = false
     private var applyingTargetSettings = false
     private var applyingShortcutSettings = false
     private var applyingWorkingDirectorySettings = false
+    private var tabScrollPaneHeightListenerInstalled = false
     private var activeRunButton: ActiveRunButton? = null
     private var runSpinnerIndex = 0
 
@@ -220,14 +228,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val runAllButton = JButton(RUN_ALL_BUTTON_TEXT)
     private val submitButton = JButton("📤")
     private val helpButton = JButton("?")
-    private val pluginButton = JButton(IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
-    private val utilityPluginTabButton = JButton("实用", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
-    private val themePluginTabButton = JButton("主题", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
+    private val settingsTabButton = JButton("设置")
+    private val utilitySettingsTabButton = JButton("实用", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
+    private val themeSettingsTabButton = JButton("主题", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
     private val codeforcesPluginToggleButton = JButton()
     private val classicThemeToggleButton = JButton()
     private val aveMujicaThemeToggleButton = JButton()
     private val scaledIconCache = mutableMapOf<String, Icon>()
+    private val generatedIconPresenceCache = mutableMapOf<String, Boolean>()
+    private val aveMujicaStatusGlyphCache = mutableMapOf<String, BufferedImage?>()
     private val iconAnimationTimers = mutableMapOf<JButton, Timer>()
+    private var aveMujicaLineHighlightTile: BufferedImage? = null
+    private var aveMujicaLineHighlightAnimationStartedNanos = 0L
+    private var aveMujicaStatusGlyphAnimationStartedNanos = 0L
+    private var aveMujicaLineHighlightFrameOffset = 0.0
+    private var aveMujicaStatusGlyphFrameOffset = 0.0
     private val aveMujicaFont: Font? by lazy { loadAveMujicaFont() }
     private val verdictLabel = JBLabel("")
     private var verdictPageUrl: String? = null
@@ -288,14 +303,27 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val tabScrollPane = JBScrollPane(tabStrip)
     private val submissionStatusPanel = JPanel(BorderLayout())
     private val contentCards = JPanel(CardLayout())
-    private val pluginContentCards = JPanel(CardLayout())
+    private val settingsContentCards = JPanel(CardLayout())
     private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
     private val settingsReturnHintPanel = JPanel(BorderLayout())
     private val outputContainer = JPanel(BorderLayout())
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
     private val actualArea = JBTextArea()
-
+    private val aveMujicaLineHighlightTimer = Timer(AVE_MUJICA_FLOW_ANIMATION_DELAY_MILLIS) {
+        aveMujicaLineHighlightFrameOffset = animationOffset(
+            startedNanos = aveMujicaLineHighlightAnimationStartedNanos,
+            pixelsPerSecond = AVE_MUJICA_LINE_HIGHLIGHT_PIXELS_PER_SECOND,
+        )
+        actualArea.repaint()
+    }
+    private val aveMujicaStatusGlyphTimer = Timer(AVE_MUJICA_FLOW_ANIMATION_DELAY_MILLIS) {
+        aveMujicaStatusGlyphFrameOffset = animationOffset(
+            startedNanos = aveMujicaStatusGlyphAnimationStartedNanos,
+            pixelsPerSecond = AVE_MUJICA_STATUS_GLYPH_PIXELS_PER_SECOND,
+        )
+        tabStrip.repaint()
+    }
     init {
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
         background = theme.panel
@@ -308,7 +336,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         debugSelectedCaseButton.toolTipText = "Debug this case with the selected run target"
         settingsButton.toolTipText = "Settings"
         helpButton.toolTipText = "Open CPH documentation"
-        pluginButton.toolTipText = "Plugin"
         singleFileModeEnabled.toolTipText = "Automatically select or create the C/C++ File run target for the focused .cpp file"
         singleFileWorkingDirectoryField.toolTipText = "Working directory for CPH-managed C/C++ File run targets"
         singleFileWorkingDirectoryChooserButton.toolTipText = "Choose working directory"
@@ -319,7 +346,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureSettingsButton()
         configureSubmitButton()
         configureHelpButton()
-        configurePluginButton()
         configureVerdictLabel()
         configureWorkingDirectoryChooserButton()
 
@@ -327,9 +353,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runAllButton.addActionListener { runAllCases() }
         submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
         helpButton.addActionListener { BrowserUtil.browse(CPH_DOCS_URL) }
-        pluginButton.addActionListener { togglePluginsPanel() }
-        utilityPluginTabButton.addActionListener { showPluginTab(PluginTab.UTILITY) }
-        themePluginTabButton.addActionListener { showPluginTab(PluginTab.THEMES) }
+        settingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.SETTINGS) }
+        utilitySettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.UTILITY) }
+        themeSettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.THEMES) }
         codeforcesPluginToggleButton.addActionListener { toggleCodeforcesSubmitPlugin() }
         classicThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.CLASSIC) }
         aveMujicaThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.AVE_MUJICA) }
@@ -428,21 +454,30 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         stopRunSpinner()
         submitSpinnerTimer.stop()
         hideSubmissionStatusTimer.stop()
+        stopAveMujicaLineHighlightAnimation()
+        stopAveMujicaStatusGlyphAnimation()
         iconAnimationTimers.values.forEach { it.stop() }
         iconAnimationTimers.clear()
     }
 
     internal fun triggerShortcut(action: CphShortcutAction) {
         when (action) {
-            CphShortcutAction.RUN_ALL -> runAllCases()
-            CphShortcutAction.RUN_SELECTED_CASE -> runSelectedCase()
-            CphShortcutAction.DEBUG_SELECTED_CASE -> debugSelectedCase()
+            CphShortcutAction.RUN_ALL -> triggerShortcutAction(runAllButton) { runAllCases() }
+            CphShortcutAction.RUN_SELECTED_CASE -> triggerShortcutAction(runSelectedCaseButton) { runSelectedCase() }
+            CphShortcutAction.DEBUG_SELECTED_CASE -> triggerShortcutAction(debugSelectedCaseButton) { debugSelectedCase() }
             CphShortcutAction.SUBMIT -> {
                 if (isCodeforcesSubmitPluginEnabled()) {
-                    CphSubmitOrchestrator.getInstance(project).submit()
+                    triggerShortcutAction(submitButton) {
+                        CphSubmitOrchestrator.getInstance(project).submit()
+                    }
                 }
             }
         }
+    }
+
+    private fun triggerShortcutAction(button: JButton, action: () -> Unit) {
+        playThemedIconAnimation(button)
+        action()
     }
 
     private fun buildTop(): JComponent {
@@ -460,8 +495,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val rightActions = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 4)).also {
             it.background = theme.panel
             it.add(resetCasesButton)
-            it.add(pluginButton)
-            it.add(helpButton)
             it.add(settingsButton)
         }
         toolbar.add(leftActions, BorderLayout.WEST)
@@ -724,43 +757,81 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun configureHelpButton() {
-        configureToolbarIconButton(helpButton, { theme.text }, fontDelta = 1.0f)
+        helpButton.foreground = theme.text
+        helpButton.background = theme.panel
+        helpButton.isOpaque = false
+        helpButton.isContentAreaFilled = false
+        helpButton.isBorderPainted = false
+        helpButton.isFocusPainted = false
+        helpButton.isRolloverEnabled = true
+        helpButton.horizontalAlignment = SwingConstants.CENTER
+        helpButton.horizontalTextPosition = SwingConstants.RIGHT
+        helpButton.font = actionButtonFont(helpButton)
+        helpButton.model.addChangeListener(ChangeListener { refreshSettingsHelpButton() })
+        installThemedIconAnimation(helpButton)
+        refreshSettingsHelpButton()
     }
 
-    private fun configurePluginButton() {
-        pluginButton.foreground = theme.text
-        pluginButton.background = theme.panel
-        pluginButton.isOpaque = false
-        pluginButton.isContentAreaFilled = false
-        pluginButton.isBorderPainted = false
-        pluginButton.isFocusPainted = false
-        pluginButton.isRolloverEnabled = true
-        pluginButton.text = null
-        pluginButton.iconTextGap = 0
-        pluginButton.border = EmptyBorder(2, 6, 2, 6)
-        pluginButton.preferredSize = toolbarButtonSize()
-        pluginButton.minimumSize = pluginButton.preferredSize
-        pluginButton.maximumSize = pluginButton.preferredSize
-        pluginButton.model.addChangeListener(ChangeListener { refreshPluginButton() })
-        refreshPluginButton()
-    }
-
-    private fun refreshPluginButton() {
-        val model = pluginButton.model
+    private fun refreshSettingsHelpButton() {
+        val model = helpButton.model
         val pressed = model.isPressed && model.isArmed
-        val highlighted = pluginsVisible || pluginButton.isEnabled && (pressed || model.isRollover)
-        refreshThemedToolbarIcon(pluginButton, pressed || pluginsVisible)
-        pluginButton.foreground = if (pluginsVisible) theme.run else theme.text
-        pluginButton.background = when {
-            pluginsVisible -> theme.actionHover
+        val highlighted = helpButton.isEnabled && (pressed || model.isRollover)
+        helpButton.foreground = if (helpButton.isEnabled) theme.text else theme.muted
+        helpButton.background = when {
+            !helpButton.isEnabled -> theme.panel
             pressed -> theme.actionPressed
             model.isRollover -> theme.actionHover
             else -> theme.panel
         }
-        pluginButton.isOpaque = highlighted
-        pluginButton.isContentAreaFilled = highlighted
-        pluginButton.repaint()
+        helpButton.border = EmptyBorder(4, 8, 4, 8)
+        helpButton.preferredSize = settingsHelpButtonSize()
+        helpButton.minimumSize = helpButton.preferredSize
+        helpButton.maximumSize = helpButton.preferredSize
+        helpButton.isOpaque = highlighted
+        helpButton.isContentAreaFilled = highlighted
+        helpButton.isBorderPainted = false
+        if (theme.id == CphThemeId.AVE_MUJICA) {
+            helpButton.putClientProperty(AVE_MUJICA_ICON_NAME_PROPERTY, "help")
+            helpButton.putClientProperty(AVE_MUJICA_ICON_SIZE_PROPERTY, settingsHelpIconSize())
+            val icon = aveMujicaSettingsHelpIcon(pressed)
+            helpButton.text = if (icon == null) "帮助" else null
+            helpButton.icon = icon
+            helpButton.iconTextGap = 0
+            helpButton.font = decorativeFont(baseButtonFont(helpButton), Font.BOLD, 2.0f)
+        } else {
+            helpButton.putClientProperty(AVE_MUJICA_ICON_NAME_PROPERTY, null)
+            helpButton.putClientProperty(AVE_MUJICA_ICON_SIZE_PROPERTY, null)
+            helpButton.text = "帮助"
+            helpButton.icon = HelpGlyphIcon(if (helpButton.isEnabled) theme.text else theme.muted, settingsClassicHelpIconSize())
+            helpButton.iconTextGap = 6
+            helpButton.font = actionButtonFont(helpButton)
+        }
+        helpButton.repaint()
     }
+
+    private fun aveMujicaSettingsHelpIcon(pressed: Boolean): Icon? {
+        val icon = themedIcon("help", helpButton, pressed, settingsHelpIconSize()) ?: return null
+        val text = scaledAspectResourceIcon(
+            AVE_MUJICA_HELP_TEXT_RESOURCE,
+            AVE_MUJICA_HELP_TEXT_HEIGHT,
+            trimTransparentPadding = true,
+        ) ?: return null
+        return HorizontalIcon(icon, text, AVE_MUJICA_HELP_ICON_TEXT_GAP)
+    }
+
+    private fun settingsHelpButtonSize(): Dimension {
+        return if (theme.id == CphThemeId.AVE_MUJICA) {
+            Dimension(122, 45)
+        } else {
+            Dimension(78, 32)
+        }
+    }
+
+    private fun settingsHelpIconSize(): Int {
+        return if (theme.id == CphThemeId.AVE_MUJICA) aveMujicaIconSize(30) else settingsClassicHelpIconSize()
+    }
+
+    private fun settingsClassicHelpIconSize(): Int = 18
 
     private fun configureToolbarIconButton(button: JButton, baseColor: Color, fontDelta: Float = 2.0f) {
         configureToolbarIconButton(button, { baseColor }, fontDelta)
@@ -809,15 +880,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             submitButton -> setThemeButtonFace(button, "upload", pressed, "📤", null, toolbarIconSize())
             resetCasesButton -> setThemeButtonFace(button, "reset_rerun", pressed, "↺", null, toolbarIconSize())
             settingsButton -> setThemeButtonFace(button, "settings", pressed || settingsVisible, "⚙", null, toolbarIconSize())
-            helpButton -> setThemeButtonFace(button, "help", pressed, "?", null, toolbarIconSize())
-            pluginButton -> setThemeButtonFace(
-                button,
-                "plugin_extension",
-                pressed || pluginsVisible,
-                null,
-                IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java),
-                toolbarIconSize(),
-            )
         }
     }
 
@@ -880,12 +942,24 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         if (frame != null) {
             themedAnimationIcon(iconName, frame, size)?.let { return it }
         }
+        val mousePressed = button.model.isPressed && button.model.isArmed
+        val suppressPressedState = mousePressed && hasThemedAnimation(iconName)
         val state = when {
-            pressed -> "pressed_static"
+            pressed && !suppressPressedState -> "pressed_static"
             button.model.isRollover -> "hover"
             else -> "normal"
         }
         return themedStateIcon(iconName, state, size)
+    }
+
+    private fun hasThemedAnimation(iconName: String): Boolean {
+        val key = "animation:$iconName"
+        generatedIconPresenceCache[key]?.let { return it }
+        val hasAnimation = CphToolWindowPanel::class.java.getResource(
+            "/icons/avemujica/generated/512/$iconName/pressed_01.png",
+        ) != null
+        generatedIconPresenceCache[key] = hasAnimation
+        return hasAnimation
     }
 
     private fun themedStateIcon(iconName: String, state: String, size: Int): Icon? {
@@ -893,14 +967,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val legacyAnimatedState = if (state == "pressed_static") "pressed" else "idle"
         val legacyAnimatedPath = "/icons/avemujica/animated/512/${iconName}_$legacyAnimatedState.png"
         val legacyStandalonePath = "/icons/avemujica/standalone/512/$iconName.png"
-        return scaledResourceIcon(generatedPath, size)
+        return scaledResourceIcon(generatedPath, size, trimTransparentPadding = true)
             ?: scaledResourceIcon(legacyAnimatedPath, size)
             ?: scaledResourceIcon(legacyStandalonePath, size)
     }
 
     private fun themedAnimationIcon(iconName: String, frame: Int, size: Int): Icon? {
         val framePath = "/icons/avemujica/generated/512/$iconName/pressed_${frame.toString().padStart(2, '0')}.png"
-        return scaledResourceIcon(framePath, size)
+        return scaledResourceIcon(framePath, size, trimTransparentPadding = true)
     }
 
     private fun installThemedIconAnimation(button: JButton) {
@@ -920,7 +994,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         if (themedAnimationIcon(iconName, 1, iconSize) == null) return
         iconAnimationTimers.remove(button)?.stop()
         button.putClientProperty(AVE_MUJICA_ICON_FRAME_PROPERTY, 1)
-        button.icon = themedAnimationIcon(iconName, 1, iconSize)
+        if (button == helpButton) {
+            refreshSettingsHelpButton()
+        } else {
+            button.icon = themedAnimationIcon(iconName, 1, iconSize)
+        }
         button.repaint()
 
         val timer = Timer(AVE_MUJICA_ANIMATION_DELAY_MILLIS, null)
@@ -933,7 +1011,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 refreshButtonAfterThemedAnimation(button)
             } else {
                 button.putClientProperty(AVE_MUJICA_ICON_FRAME_PROPERTY, frame)
-                button.icon = themedAnimationIcon(iconName, frame, iconSize) ?: themedStateIcon(iconName, "pressed_static", iconSize)
+                if (button == helpButton) {
+                    refreshSettingsHelpButton()
+                } else {
+                    button.icon = themedAnimationIcon(iconName, frame, iconSize)
+                        ?: themedStateIcon(iconName, "pressed_static", iconSize)
+                }
                 button.repaint()
             }
         }
@@ -947,8 +1030,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             submitButton -> refreshToolbarIconButton(submitButton, theme.run)
             resetCasesButton -> refreshToolbarIconButton(resetCasesButton, theme.text)
             settingsButton -> refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
-            helpButton -> refreshToolbarIconButton(helpButton, theme.text)
-            pluginButton -> refreshPluginButton()
+            helpButton -> refreshSettingsHelpButton()
             runSelectedCaseButton -> refreshRunActionButton(
                 runSelectedCaseButton,
                 theme.good,
@@ -967,14 +1049,79 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         button.repaint()
     }
 
-    private fun scaledResourceIcon(path: String, size: Int): Icon? {
-        val key = "$path@$size@painted"
+    private fun scaledResourceIcon(path: String, size: Int, trimTransparentPadding: Boolean = false): Icon? {
+        val key = "$path@$size@painted@trim=$trimTransparentPadding"
         scaledIconCache[key]?.let { return it }
         val url = CphToolWindowPanel::class.java.getResource(path) ?: return null
         val source = ImageIO.read(url) ?: return null
-        val icon = HighQualityPngIcon(source, size)
+        val icon = HighQualityPngIcon(source, size, if (trimTransparentPadding) visibleIconSourceRect(source) else null)
         scaledIconCache[key] = icon
         return icon
+    }
+
+    private fun scaledAspectResourceIcon(path: String, height: Int, trimTransparentPadding: Boolean = false): Icon? {
+        val key = "$path@h=$height@painted@trim=$trimTransparentPadding"
+        scaledIconCache[key]?.let { return it }
+        val url = CphToolWindowPanel::class.java.getResource(path) ?: return null
+        val source = ImageIO.read(url) ?: return null
+        val sourceRect = if (trimTransparentPadding) visibleContentSourceRect(source) else null
+        val width = ((sourceRect?.width ?: source.width).toDouble() / (sourceRect?.height ?: source.height) * height)
+            .roundToInt()
+            .coerceAtLeast(1)
+        val icon = HighQualityPngIcon(source, width, height, sourceRect)
+        scaledIconCache[key] = icon
+        return icon
+    }
+
+    private fun visibleIconSourceRect(image: BufferedImage): Rectangle? {
+        var minX = image.width
+        var minY = image.height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until image.height) {
+            for (x in 0 until image.width) {
+                val alpha = image.getRGB(x, y) ushr 24
+                if (alpha > AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD) {
+                    minX = minOf(minX, x)
+                    minY = minOf(minY, y)
+                    maxX = maxOf(maxX, x)
+                    maxY = maxOf(maxY, y)
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) return null
+
+        val visibleWidth = maxX - minX + 1
+        val visibleHeight = maxY - minY + 1
+        val paddedSide = (maxOf(visibleWidth, visibleHeight) * AVE_MUJICA_ICON_TRIM_PADDING_SCALE)
+            .roundToInt()
+            .coerceAtLeast(maxOf(visibleWidth, visibleHeight))
+            .coerceAtMost(minOf(image.width, image.height))
+        val centerX = (minX + maxX) / 2
+        val centerY = (minY + maxY) / 2
+        val x = (centerX - paddedSide / 2).coerceIn(0, image.width - paddedSide)
+        val y = (centerY - paddedSide / 2).coerceIn(0, image.height - paddedSide)
+        return Rectangle(x, y, paddedSide, paddedSide)
+    }
+
+    private fun visibleContentSourceRect(image: BufferedImage): Rectangle? {
+        var minX = image.width
+        var minY = image.height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until image.height) {
+            for (x in 0 until image.width) {
+                val alpha = image.getRGB(x, y) ushr 24
+                if (alpha > AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD) {
+                    minX = minOf(minX, x)
+                    minY = minOf(minY, y)
+                    maxX = maxOf(maxX, x)
+                    maxY = maxOf(maxY, y)
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) return null
+        return Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1)
     }
 
     private fun configureWorkingDirectoryChooserButton() {
@@ -994,7 +1141,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         contentCards.background = theme.panel
         contentCards.add(buildMainView(), MAIN_VIEW_CARD)
         contentCards.add(buildSettingsView(), SETTINGS_VIEW_CARD)
-        contentCards.add(buildPluginsView(), PLUGINS_VIEW_CARD)
         showActiveView()
         return contentCards
     }
@@ -1005,13 +1151,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         tabScrollPane.border = MatteBorder(1, 0, 1, 0, theme.border)
         tabScrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
         tabScrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-        tabScrollPane.preferredSize = Dimension(0, TAB_STRIP_BASE_HEIGHT)
-        tabScrollPane.minimumSize = Dimension(0, TAB_STRIP_BASE_HEIGHT)
+        tabScrollPane.preferredSize = Dimension(0, tabStripBaseHeight())
+        tabScrollPane.minimumSize = Dimension(0, tabStripBaseHeight())
         tabScrollPane.viewport.background = theme.panel
-        tabScrollPane.horizontalScrollBar.addComponentListener(object : ComponentAdapter() {
-            override fun componentShown(e: ComponentEvent) = adjustTabScrollPaneHeight(true)
-            override fun componentHidden(e: ComponentEvent) = adjustTabScrollPaneHeight(false)
-        })
+        installTabScrollPaneHeightListener()
 
         return JPanel(BorderLayout()).also {
             it.background = theme.panel
@@ -1020,9 +1163,22 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun installTabScrollPaneHeightListener() {
+        if (tabScrollPaneHeightListenerInstalled) return
+        tabScrollPaneHeightListenerInstalled = true
+        tabScrollPane.horizontalScrollBar.addComponentListener(object : ComponentAdapter() {
+            override fun componentShown(e: ComponentEvent) = adjustTabScrollPaneHeight(true)
+            override fun componentHidden(e: ComponentEvent) = adjustTabScrollPaneHeight(false)
+        })
+    }
+
+    private fun syncTabScrollPaneHeight() {
+        adjustTabScrollPaneHeight(tabScrollPane.horizontalScrollBar.isVisible)
+    }
+
     private fun adjustTabScrollPaneHeight(scrollBarVisible: Boolean) {
         val extra = if (scrollBarVisible) tabScrollPane.horizontalScrollBar.preferredSize.height else 0
-        val newHeight = TAB_STRIP_BASE_HEIGHT + extra
+        val newHeight = tabStripBaseHeight() + extra
         if (tabScrollPane.preferredSize.height == newHeight) return
         tabScrollPane.preferredSize = Dimension(0, newHeight)
         tabScrollPane.minimumSize = Dimension(0, newHeight)
@@ -1030,7 +1186,26 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         tabScrollPane.parent?.repaint()
     }
 
+    private fun tabStripBaseHeight(): Int {
+        return if (theme.id == CphThemeId.AVE_MUJICA) AVE_MUJICA_TAB_STRIP_BASE_HEIGHT else TAB_STRIP_BASE_HEIGHT
+    }
+
     private fun buildSettingsView(): JComponent {
+        settingsContentCards.background = theme.panel
+        settingsContentCards.add(buildSettingsFormView(), SettingsPanelTab.SETTINGS.cardName)
+        settingsContentCards.add(buildPluginUtilityView(), SettingsPanelTab.UTILITY.cardName)
+        settingsContentCards.add(buildPluginThemesView(), SettingsPanelTab.THEMES.cardName)
+        showCurrentSettingsTabCard()
+        val tabStrip = buildSettingsTabStrip()
+        refreshSettingsTabButtons()
+        return JPanel(BorderLayout()).also {
+            it.background = theme.panel
+            it.add(tabStrip, BorderLayout.NORTH)
+            it.add(settingsContentCards, BorderLayout.CENTER)
+        }
+    }
+
+    private fun buildSettingsFormView(): JComponent {
         singleFileModeEnabled.isOpaque = false
         ignoreTrailingWhitespace.isOpaque = false
         outputSplitEnabled.isOpaque = false
@@ -1066,8 +1241,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun rebuildSettingsGrid() {
         settingsGrid.removeAll()
-        settingsGrid.add(buildSettingsReturnHint())
-        settingsGrid.add(settingsSection("运行设置") {
+        settingsGrid.add(settingsSection("运行设置", buildSettingsHelpHeaderComponent()) {
             settingCheckBoxRow(singleFileModeEnabled)
             settingRow("工作目录配置:", singleFileWorkingDirectoryControl())
             settingRow("Time Limits:", timeoutControl())
@@ -1101,32 +1275,30 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         settingsGrid.repaint()
     }
 
-    private fun buildPluginsView(): JComponent {
-        pluginContentCards.background = theme.panel
-        pluginContentCards.add(buildPluginUtilityView(), PluginTab.UTILITY.cardName)
-        pluginContentCards.add(buildPluginThemesView(), PluginTab.THEMES.cardName)
-        showCurrentPluginTabCard()
-        refreshPluginTabButtons()
-        return JPanel(BorderLayout()).also {
+    private fun buildSettingsHelpHeaderComponent(): JComponent {
+        refreshSettingsHelpButton()
+        return JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).also {
             it.background = theme.panel
-            it.add(buildPluginTabStrip(), BorderLayout.NORTH)
-            it.add(pluginContentCards, BorderLayout.CENTER)
+            it.isOpaque = false
+            it.add(helpButton)
         }
     }
 
-    private fun buildPluginTabStrip(): JComponent {
-        configurePluginTabButton(utilityPluginTabButton)
-        configurePluginTabButton(themePluginTabButton)
+    private fun buildSettingsTabStrip(): JComponent {
+        configureSettingsTabButton(settingsTabButton)
+        configureSettingsTabButton(utilitySettingsTabButton)
+        configureSettingsTabButton(themeSettingsTabButton)
 
         return JPanel(FlowLayout(FlowLayout.LEFT, 8, 6)).also {
             it.background = theme.panel
             it.border = MatteBorder(1, 0, 1, 0, theme.border)
-            it.add(utilityPluginTabButton)
-            it.add(themePluginTabButton)
+            it.add(settingsTabButton)
+            it.add(utilitySettingsTabButton)
+            it.add(themeSettingsTabButton)
         }
     }
 
-    private fun configurePluginTabButton(button: JButton) {
+    private fun configureSettingsTabButton(button: JButton) {
         button.iconTextGap = 6
         button.isOpaque = true
         button.isContentAreaFilled = true
@@ -1135,9 +1307,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         button.isRolloverEnabled = true
         button.border = EmptyBorder(4, 10, 4, 10)
         button.font = button.font.deriveFont(Font.BOLD)
-        if (button.getClientProperty(PLUGIN_TAB_CONFIGURED_PROPERTY) != true) {
-            button.model.addChangeListener(ChangeListener { refreshPluginTabButtons() })
-            button.putClientProperty(PLUGIN_TAB_CONFIGURED_PROPERTY, true)
+        if (button.getClientProperty(SETTINGS_TAB_CONFIGURED_PROPERTY) != true) {
+            button.model.addChangeListener(ChangeListener { refreshSettingsTabButtons() })
+            button.putClientProperty(SETTINGS_TAB_CONFIGURED_PROPERTY, true)
         }
     }
 
@@ -1280,6 +1452,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             summary = "Ave Mujica 暗色面板、金色操作高亮与角色功能图标。",
             icon = scaledResourceIcon("/icons/avemujica/generated/512/theme/normal.png", aveMujicaIconSize(46))
                 ?: IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java),
+            titleIcon = scaledAspectResourceIcon(
+                AVE_MUJICA_THEME_TITLE_RESOURCE,
+                AVE_MUJICA_THEME_TITLE_HEIGHT,
+                trimTransparentPadding = true,
+            ),
             toggleButton = aveMujicaThemeToggleButton,
         )
     }
@@ -1288,6 +1465,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         palette: CphThemePalette,
         summary: String,
         icon: Icon,
+        titleIcon: Icon? = null,
         toggleButton: JButton,
     ): JComponent {
         val iconLabel = JBLabel(icon).also {
@@ -1297,8 +1475,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.maximumSize = it.preferredSize
         }
         val title = JBLabel(palette.displayName).also {
+            if (titleIcon != null) {
+                it.text = null
+                it.icon = titleIcon
+            }
             it.foreground = theme.text
-            it.font = if (palette.id == CphThemeId.AVE_MUJICA) {
+            it.font = if (palette.id == CphThemeId.AVE_MUJICA && titleIcon == null) {
                 decorativeFont(it.font, Font.BOLD, 3.0f)
             } else {
                 it.font.deriveFont(Font.BOLD)
@@ -1404,10 +1586,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun rebuildThemedLayout() {
         val selectedCaseId = selectedCase?.id
+        stopAveMujicaLineHighlightAnimation()
+        stopAveMujicaStatusGlyphAnimation()
         background = theme.panel
         listOf(inputArea, expectedArea, actualArea).forEach(::configureEditor)
         contentCards.removeAll()
-        pluginContentCards.removeAll()
+        settingsContentCards.removeAll()
         tabStrip.removeAll()
         removeAll()
         add(buildTop(), BorderLayout.NORTH)
@@ -1446,9 +1630,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun toggleSettingsPanel() {
         settingsVisible = !settingsVisible
         if (settingsVisible) {
-            pluginsVisible = false
-        }
-        if (settingsVisible) {
+            activeSettingsTab = SettingsPanelTab.SETTINGS
+            showCurrentSettingsTabCard()
             showSettingsReturnHintOnce()
         } else {
             settingsReturnHintPanel.isVisible = false
@@ -1456,34 +1639,25 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         showActiveView()
     }
 
-    private fun togglePluginsPanel() {
-        pluginsVisible = !pluginsVisible
-        if (pluginsVisible) {
-            settingsVisible = false
-            settingsReturnHintPanel.isVisible = false
-            showPluginTab(PluginTab.UTILITY)
-        }
-        showActiveView()
+    private fun showSettingsTab(tab: SettingsPanelTab) {
+        activeSettingsTab = tab
+        showCurrentSettingsTabCard()
+        refreshSettingsTabButtons()
+        settingsContentCards.revalidate()
+        settingsContentCards.repaint()
     }
 
-    private fun showPluginTab(tab: PluginTab) {
-        activePluginTab = tab
-        showCurrentPluginTabCard()
-        refreshPluginTabButtons()
-        pluginContentCards.revalidate()
-        pluginContentCards.repaint()
+    private fun showCurrentSettingsTabCard() {
+        (settingsContentCards.layout as? CardLayout)?.show(settingsContentCards, activeSettingsTab.cardName)
     }
 
-    private fun showCurrentPluginTabCard() {
-        (pluginContentCards.layout as? CardLayout)?.show(pluginContentCards, activePluginTab.cardName)
+    private fun refreshSettingsTabButtons() {
+        refreshSettingsTabButton(settingsTabButton, activeSettingsTab == SettingsPanelTab.SETTINGS)
+        refreshSettingsTabButton(utilitySettingsTabButton, activeSettingsTab == SettingsPanelTab.UTILITY)
+        refreshSettingsTabButton(themeSettingsTabButton, activeSettingsTab == SettingsPanelTab.THEMES)
     }
 
-    private fun refreshPluginTabButtons() {
-        refreshPluginTabButton(utilityPluginTabButton, activePluginTab == PluginTab.UTILITY)
-        refreshPluginTabButton(themePluginTabButton, activePluginTab == PluginTab.THEMES)
-    }
-
-    private fun refreshPluginTabButton(button: JButton, selected: Boolean) {
+    private fun refreshSettingsTabButton(button: JButton, selected: Boolean) {
         val model = button.model
         val pressed = model.isPressed && model.isArmed
         val enabled = !running
@@ -1523,16 +1697,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun showActiveView() {
         val card = when {
-            pluginsVisible -> PLUGINS_VIEW_CARD
             settingsVisible -> SETTINGS_VIEW_CARD
             else -> MAIN_VIEW_CARD
         }
         (contentCards.layout as? CardLayout)?.show(contentCards, card)
         settingsButton.toolTipText = if (settingsVisible) "Hide settings" else "Settings"
         refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
-        pluginButton.toolTipText = if (pluginsVisible) "Hide plugins" else "Plugin"
-        refreshPluginButton()
-        refreshPluginTabButtons()
+        refreshSettingsHelpButton()
+        refreshSettingsTabButtons()
         refreshThemePluginUi()
         contentCards.revalidate()
         contentCards.repaint()
@@ -1644,16 +1816,28 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         CphShortcutSettings.getInstance().update(nextState)
     }
 
-    private fun settingsSection(title: String, content: JPanel.() -> Unit): JPanel {
+    private fun settingsSection(
+        title: String,
+        headerRight: JComponent? = null,
+        content: JPanel.() -> Unit,
+    ): JPanel {
         val body = JPanel(GridBagLayout()).also {
             it.background = theme.surface
             it.content()
+        }
+        val header = JPanel(BorderLayout(8, 0)).also {
+            it.background = theme.surface
+            it.add(JBLabel(title).also { label -> label.foreground = theme.text }, BorderLayout.WEST)
+            headerRight?.let { right ->
+                right.background = theme.surface
+                it.add(right, BorderLayout.EAST)
+            }
         }
         return JPanel(BorderLayout(0, 8)).also {
             it.background = theme.surface
             it.border = CompoundBorder(MatteBorder(1, 1, 1, 1, theme.border), EmptyBorder(10, 12, 10, 12))
             it.alignmentX = Component.LEFT_ALIGNMENT
-            it.add(JBLabel(title).also { label -> label.foreground = theme.text }, BorderLayout.NORTH)
+            it.add(header, BorderLayout.NORTH)
             it.add(body, BorderLayout.CENTER)
             val preferred = it.preferredSize
             it.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
@@ -2222,11 +2406,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun runAllCases() {
         flushSelectedCase()
-        runCases(currentTargetCases.cases.filter { it.enabled }, ActiveRunButton.RUN_ALL)
+        runCases(currentTargetCases.cases, ActiveRunButton.RUN_ALL)
     }
 
     private fun runCases(cases: List<CphTestCase>, source: ActiveRunButton) {
         if (cases.isEmpty() || running) return
+        val runCases = cases.toList()
         val identity = currentIdentity
         val targetCases = currentTargetCases
         val timeoutMillis = currentTargetCases.timeoutMillis
@@ -2238,7 +2423,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             source == ActiveRunButton.RUN_ALL
         var completedAllCases = false
         runtimeStates.clear()
-        cases.forEach { runtimeStates[it.id] = RuntimeTabState.QUEUED }
+        runCases.forEach { runtimeStates[it.id] = RuntimeTabState.RUNNING }
         refreshTabs()
         startRunSpinner(source)
         setRunning(true)
@@ -2252,8 +2437,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         verdict = CphVerdict.ERROR,
                         message = "Save failed before running CPH samples: ${saveError.message ?: saveError.javaClass.simpleName}",
                     )
-                    cases.forEach { it.lastResult = result.copy() }
-                    cases.forEach { reportCaseError(it, it.lastResult) }
+                    runCases.forEach { it.lastResult = result.copy() }
+                    runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
                 val syncError = compileSettingsSynchronizer.sync(
@@ -2267,39 +2452,74 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         verdict = CphVerdict.ERROR,
                         message = "Failed to sync CPH compile settings: $syncError",
                     )
-                    cases.forEach { it.lastResult = result.copy() }
-                    cases.forEach { reportCaseError(it, it.lastResult) }
+                    runCases.forEach { it.lastResult = result.copy() }
+                    runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
-                for ((index, testCase) in cases.withIndex()) {
-                    if (indicator.isCanceled) break
-                    ApplicationManager.getApplication().invokeLater {
-                        runtimeStates[testCase.id] = RuntimeTabState.RUNNING
-                        refreshTabs()
-                        if (selectedCase?.id == testCase.id) renderSelectedCase()
+
+                indicator.text = "Preparing CPH run target"
+                val preparedTarget = when (val preparation = runner.prepareForRun(identity)) {
+                    is CphRunPreparation.Failed -> {
+                        runCases.forEach { it.lastResult = preparation.result.copy() }
+                        runCases.forEach { reportCaseError(it, it.lastResult) }
+                        return
                     }
-                    indicator.text = "Running ${testCase.name}"
-                    indicator.fraction = index.toDouble() / cases.size
-                    val result = runner.runCase(
-                        identity,
-                        testCase,
-                        timeoutMillis,
-                        ignoreTrailing,
-                        compareExpectedOutput = !noExpectedMode,
-                    ).let {
-                        if (noExpectedMode) CphStatusMapper.normalizeNoExpectedResult(it) else it
-                    }
-                    testCase.lastResult = result
-                    ApplicationManager.getApplication().invokeLater {
-                        reportCaseError(testCase, result)
-                        runtimeStates.remove(testCase.id)
-                        refreshTabs()
-                        if (selectedCase?.id == testCase.id) {
-                            renderSelectedCase()
+                    is CphRunPreparation.Ready -> preparation.target
+                }
+
+                val parallelism = caseRunParallelism(runCases.size)
+                val executor = Executors.newFixedThreadPool(parallelism) { task ->
+                    Thread(task, "CPH case runner").apply { isDaemon = true }
+                }
+                val completionService = ExecutorCompletionService<Pair<CphTestCase, CphCaseResult>>(executor)
+                indicator.text = "Running ${runCases.size} CPH samples"
+                runCases.forEach { testCase ->
+                    completionService.submit {
+                        val result = runCatching {
+                            runner.runPreparedCase(
+                                preparedTarget,
+                                testCase,
+                                timeoutMillis,
+                                ignoreTrailing,
+                                compareExpectedOutput = !noExpectedMode,
+                            ).let {
+                                if (noExpectedMode) CphStatusMapper.normalizeNoExpectedResult(it) else it
+                            }
+                        }.getOrElse { error ->
+                            CphCaseResult(
+                                verdict = CphVerdict.ERROR,
+                                message = error.message ?: error.javaClass.simpleName,
+                            )
                         }
+                        testCase to result
                     }
                 }
-                completedAllCases = !indicator.isCanceled
+
+                var completedCases = 0
+                try {
+                    while (completedCases < runCases.size && !indicator.isCanceled) {
+                        val (testCase, result) = completionService.take().get()
+                        completedCases += 1
+                        indicator.text = "Completed $completedCases/${runCases.size} CPH samples"
+                        indicator.fraction = completedCases.toDouble() / runCases.size
+                        testCase.lastResult = result
+                        ApplicationManager.getApplication().invokeLater {
+                            reportCaseError(testCase, result)
+                            runtimeStates.remove(testCase.id)
+                            refreshTabs()
+                            if (selectedCase?.id == testCase.id) {
+                                renderSelectedCase()
+                            }
+                        }
+                    }
+                } finally {
+                    executor.shutdownNow()
+                    executor.awaitTermination(1, TimeUnit.SECONDS)
+                }
+                if (indicator.isCanceled) {
+                    return
+                }
+                completedAllCases = completedCases == runCases.size
             }
 
             override fun onFinished() {
@@ -2307,7 +2527,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     val shouldSubmit = shouldAutoSubmitOnAllAccepted &&
                         completedAllCases &&
                         !pendingTargetRefresh &&
-                        cases.all { it.lastResult.verdict == CphVerdict.AC }
+                        runCases.all { it.lastResult.verdict == CphVerdict.AC }
                     runtimeStates.clear()
                     setRunning(false)
                     if (pendingTargetRefresh) {
@@ -2324,6 +2544,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 }
             }
         }.queue()
+    }
+
+    private fun caseRunParallelism(caseCount: Int): Int {
+        val cpuCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        return minOf(caseCount, cpuCount, MAX_PARALLEL_CASE_RUNS).coerceAtLeast(1)
     }
 
     private fun reportCaseError(testCase: CphTestCase, result: CphCaseResult) {
@@ -2476,16 +2701,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun refreshActualDiffHighlights() {
         actualArea.highlighter.removeAllHighlights()
+        stopAveMujicaLineHighlightAnimation()
         val testCase = selectedCase ?: return
         if (stateService.getState().ui.noExpectedModeEnabled) return
         val status = statusFor(testCase)
         if (status == TabStatus.NOT_RUN || status == TabStatus.AC) return
 
-        CphComparator.differingActualLines(
+        val differingLines = CphComparator.differingActualLines(
             actual = actualArea.text,
             expected = expectedArea.text,
             ignoreTrailingWhitespace = currentTargetCases.ignoreTrailingWhitespace,
-        ).forEach(::highlightActualLine)
+        )
+        differingLines.forEach(::highlightActualLine)
+        updateAveMujicaLineHighlightAnimation(differingLines.isNotEmpty())
     }
 
     private fun highlightActualLine(line: Int) {
@@ -2496,8 +2724,51 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 .minus(1)
                 .coerceAtLeast(start)
                 .coerceAtMost(actualArea.document.length)
-            actualArea.highlighter.addHighlight(start, end.coerceAtLeast(start), LineBackgroundPainter(theme.diff))
+            actualArea.highlighter.addHighlight(
+                start,
+                end.coerceAtLeast(start),
+                LineBackgroundPainter(theme.diff, lineHighlightTile(), ::aveMujicaLineHighlightOffset),
+            )
         }
+    }
+
+    private fun updateAveMujicaLineHighlightAnimation(hasDiffHighlights: Boolean) {
+        val shouldAnimate = hasDiffHighlights && theme.id == CphThemeId.AVE_MUJICA && lineHighlightTile() != null
+        if (!shouldAnimate) {
+            stopAveMujicaLineHighlightAnimation()
+            return
+        }
+        if (!aveMujicaLineHighlightTimer.isRunning) {
+            aveMujicaLineHighlightAnimationStartedNanos = System.nanoTime()
+            aveMujicaLineHighlightFrameOffset = 0.0
+            aveMujicaLineHighlightTimer.start()
+        }
+    }
+
+    private fun aveMujicaLineHighlightOffset(): Double {
+        val tileWidth = aveMujicaLineHighlightTile?.width ?: AVE_MUJICA_LINE_HIGHLIGHT_TILE_FALLBACK_WIDTH
+        return aveMujicaLineHighlightFrameOffset % tileWidth
+    }
+
+    private fun stopAveMujicaLineHighlightAnimation() {
+        if (aveMujicaLineHighlightTimer.isRunning) {
+            aveMujicaLineHighlightTimer.stop()
+        }
+        aveMujicaLineHighlightAnimationStartedNanos = 0L
+        aveMujicaLineHighlightFrameOffset = 0.0
+    }
+
+    private fun lineHighlightTile(): BufferedImage? {
+        if (theme.id != CphThemeId.AVE_MUJICA) return null
+        aveMujicaLineHighlightTile?.let { return it }
+        val url = CphToolWindowPanel::class.java.getResource(AVE_MUJICA_LINE_HIGHLIGHT_TILE) ?: return null
+        return ImageIO.read(url)?.also { aveMujicaLineHighlightTile = it }
+    }
+
+    private fun animationOffset(startedNanos: Long, pixelsPerSecond: Double): Double {
+        if (startedNanos == 0L) return 0.0
+        val elapsedSeconds = (System.nanoTime() - startedNanos).coerceAtLeast(0L) / 1_000_000_000.0
+        return elapsedSeconds * pixelsPerSecond
     }
 
     private fun refreshTabs(afterLayout: (() -> Unit)? = null) {
@@ -2513,11 +2784,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         tabStrip.add(Box.createHorizontalGlue())
         tabStrip.revalidate()
         tabStrip.repaint()
+        updateAveMujicaStatusGlyphAnimation()
+        syncTabScrollPaneHeight()
         restoreTabHorizontalScroll(scrollSnapshot)
         afterLayout?.invoke()
         SwingUtilities.invokeLater {
+            syncTabScrollPaneHeight()
             restoreTabHorizontalScroll(scrollSnapshot)
             afterLayout?.invoke()
+            updateAveMujicaStatusGlyphAnimation()
         }
     }
 
@@ -2589,18 +2864,118 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return TabStyle(color, background, color)
     }
 
+    private fun caseTabPreferredSize(): Dimension {
+        return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(128, 64) else Dimension(123, 60)
+    }
+
+    private fun caseTabMinimumSize(): Dimension {
+        return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(108, 64) else Dimension(102, 60)
+    }
+
+    private fun caseTabMaximumSize(): Dimension {
+        return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(161, 64) else Dimension(161, 60)
+    }
+
+    private fun caseTabTitleFontDelta(): Float {
+        return if (theme.id == CphThemeId.AVE_MUJICA) 0.5f else 2.0f
+    }
+
+    private fun aveMujicaCaseTextWidth(label: JBLabel, hasStatusGlyph: Boolean): Int {
+        if (hasStatusGlyph) return AVE_MUJICA_STATUS_ROW_WIDTH
+        val metrics = label.getFontMetrics(label.font)
+        return listOf("99 CASE", "99 TLE", label.text)
+            .maxOf { metrics.stringWidth(it) } + 8
+    }
+
+    private fun aveMujicaStatusGlyph(status: TabStatus): JComponent? {
+        val image = aveMujicaStatusGlyphImage(status) ?: return null
+        val size = AveMujicaStatusGlyph.preferredSizeFor(image, status.wideGlyph)
+        return AveMujicaStatusGlyph(
+            mask = image,
+            colors = aveMujicaStatusGlyphColors(status),
+            textureOffset = ::aveMujicaStatusGlyphOffset,
+        ).apply {
+            preferredSize = size
+            minimumSize = preferredSize
+            maximumSize = preferredSize
+        }
+    }
+
+    private fun aveMujicaStatusGlyphImage(status: TabStatus): BufferedImage? {
+        if (theme.id != CphThemeId.AVE_MUJICA) return null
+        val glyphName = status.glyphName ?: return null
+        if (aveMujicaStatusGlyphCache.containsKey(glyphName)) {
+            return aveMujicaStatusGlyphCache[glyphName]
+        }
+        val path = "/icons/avemujica/status/512/$glyphName.png"
+        val image = CphToolWindowPanel::class.java.getResource(path)?.let { ImageIO.read(it) }
+        aveMujicaStatusGlyphCache[glyphName] = image
+        return image
+    }
+
+    private fun aveMujicaStatusGlyphColors(status: TabStatus): StatusGlyphColors {
+        return when (status) {
+            TabStatus.OK,
+            TabStatus.AC -> StatusGlyphColors(Color(0x1B5B2A), Color(0x73E37E), Color(0xCBFFD0))
+            TabStatus.WA,
+            TabStatus.RE,
+            TabStatus.ERROR -> StatusGlyphColors(Color(0x62000C), Color(0xFF2A3D), Color(0xFFC0C8))
+            TabStatus.TLE -> StatusGlyphColors(Color(0x765012), Color(0xF2A93B), Color(0xFFE9A6))
+            TabStatus.RUNNING -> StatusGlyphColors(Color(0x384E95), Color(0x7FA7FF), Color(0xD7E5FF))
+            TabStatus.QUEUED,
+            TabStatus.NOT_RUN -> StatusGlyphColors(theme.muted.darker(), theme.muted, theme.text)
+        }
+    }
+
+    private fun updateAveMujicaStatusGlyphAnimation() {
+        val shouldAnimate = theme.id == CphThemeId.AVE_MUJICA &&
+            currentTargetCases.cases.any { aveMujicaStatusGlyphImage(statusFor(it)) != null }
+        if (shouldAnimate) {
+            if (!aveMujicaStatusGlyphTimer.isRunning) {
+                aveMujicaStatusGlyphAnimationStartedNanos = System.nanoTime()
+                aveMujicaStatusGlyphFrameOffset = 0.0
+                aveMujicaStatusGlyphTimer.start()
+            }
+        } else {
+            stopAveMujicaStatusGlyphAnimation()
+        }
+    }
+
+    private fun aveMujicaStatusGlyphOffset(): Double {
+        return aveMujicaStatusGlyphFrameOffset
+    }
+
+    private fun stopAveMujicaStatusGlyphAnimation() {
+        if (aveMujicaStatusGlyphTimer.isRunning) {
+            aveMujicaStatusGlyphTimer.stop()
+        }
+        aveMujicaStatusGlyphAnimationStartedNanos = 0L
+        aveMujicaStatusGlyphFrameOffset = 0.0
+    }
+
+    private fun caseDeleteActionWidth(): Int {
+        return if (theme.id == CphThemeId.AVE_MUJICA) 38 else 24
+    }
+
+    private fun caseDeleteButtonSize(): Dimension {
+        return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(32, 32) else Dimension(24, 20)
+    }
+
+    private fun caseDeleteIconSize(): Int {
+        return if (theme.id == CphThemeId.AVE_MUJICA) aveMujicaIconSize(24) else 16
+    }
+
     private fun updateActions() {
         val runnable = currentIdentity.runnable && !running
         val runAllActive = activeRunButton == ActiveRunButton.RUN_ALL
         val runSelectedActive = activeRunButton == ActiveRunButton.RUN_SELECTED
         val codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled()
         settingsButton.isEnabled = !running
-        pluginButton.isEnabled = !running
         runSelectedCaseButton.isEnabled = (selectedCase != null && runnable) || runSelectedActive
         debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
             currentIdentity.runnable &&
             (currentIdentity.kind == CphTargetKind.CMAKE_APP || currentIdentity.kind == CphTargetKind.CPP_FILE)
-        runAllButton.isEnabled = (currentTargetCases.cases.any { it.enabled } && runnable) || runAllActive
+        runAllButton.isEnabled = (currentTargetCases.cases.isNotEmpty() && runnable) || runAllActive
         resetCasesButton.isEnabled = !running
         timeoutSpinner.isEnabled = !running
         editorFontSizeSpinner.isEnabled = !running
@@ -2614,9 +2989,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         singleFileWorkingDirectoryChooserButton.isEnabled = !running
         refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
         refreshToolbarIconButton(resetCasesButton, theme.text)
-        refreshToolbarIconButton(helpButton, theme.text)
-        refreshPluginButton()
-        refreshPluginTabButtons()
+        refreshSettingsHelpButton()
+        refreshSettingsTabButtons()
         refreshThemePluginUi()
         refreshSubmitFeatureVisibility()
         refreshRunActionButtons()
@@ -2626,34 +3000,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private val index: Int,
         private val testCase: CphTestCase,
     ) : JPanel(BorderLayout()) {
-        private val enabledToggle = JCheckBox()
         private val deleteCaseButton = JButton("×")
         private val title = JBLabel()
         private val detail = JBLabel()
 
         init {
             val status = statusFor(testCase)
-            val displayStatus = if (status == TabStatus.RUNNING || status == TabStatus.QUEUED) {
-                tabStatusFor(
-                    CphStatusMapper.displayStatus(
-                        testCase.lastResult.verdict,
-                        stateService.getState().ui.noExpectedModeEnabled,
-                    ),
-                )
-            } else {
-                status
-            }
             val style = styleFor(status)
             val isSelected = selectedCase?.id == testCase.id
-            val isCaseEnabled = testCase.enabled
-            val foreground = if (isCaseEnabled) style.foreground else theme.muted
+            val foreground = style.foreground
+            val statusGlyph = aveMujicaStatusGlyph(status)
             val tabBackground = when {
-                isSelected && isCaseEnabled -> theme.selected
-                isSelected -> theme.surface
+                isSelected -> theme.selected
                 else -> theme.panel
             }
             val tabBorder = when {
-                !isCaseEnabled -> theme.border
                 isSelected -> style.foreground
                 else -> theme.border
             }
@@ -2663,24 +3024,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 MatteBorder(1, 1, 2, 1, tabBorder),
                 EmptyBorder(3, 10, 3, 8),
             )
-            preferredSize = Dimension(123, 60)
-            minimumSize = Dimension(102, 60)
-            maximumSize = Dimension(161, 60)
+            preferredSize = caseTabPreferredSize()
+            minimumSize = caseTabMinimumSize()
+            maximumSize = caseTabMaximumSize()
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-
-            enabledToggle.isSelected = testCase.enabled
-            enabledToggle.isEnabled = !running
-            enabledToggle.isOpaque = false
-            enabledToggle.toolTipText = if (testCase.enabled) "Enabled" else "Disabled"
-            enabledToggle.horizontalAlignment = SwingConstants.CENTER
-            enabledToggle.preferredSize = Dimension(24, 20)
-            enabledToggle.maximumSize = enabledToggle.preferredSize
-            enabledToggle.addActionListener {
-                testCase.enabled = enabledToggle.isSelected
-                selectCase(testCase)
-                refreshTabs()
-                updateActions()
-            }
 
             deleteCaseButton.isEnabled = !running
             deleteCaseButton.toolTipText = "Delete case"
@@ -2692,39 +3039,67 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             deleteCaseButton.isFocusPainted = false
             deleteCaseButton.horizontalAlignment = SwingConstants.CENTER
             deleteCaseButton.border = EmptyBorder(0, 0, 0, 0)
-            deleteCaseButton.preferredSize = if (theme.id == CphThemeId.AVE_MUJICA) Dimension(30, 26) else Dimension(24, 20)
+            deleteCaseButton.preferredSize = caseDeleteButtonSize()
             deleteCaseButton.maximumSize = deleteCaseButton.preferredSize
             deleteCaseButton.font = deleteCaseButton.font.deriveFont(Font.BOLD, deleteCaseButton.font.size2D + 1.0f)
             if (theme.id == CphThemeId.AVE_MUJICA) {
-                setThemeButtonFace(deleteCaseButton, "delete_case", false, "×", null, aveMujicaIconSize(18))
+                setThemeButtonFace(deleteCaseButton, "delete_case", false, "×", null, caseDeleteIconSize())
                 deleteCaseButton.model.addChangeListener(ChangeListener { refreshGeneratedIconOnly(deleteCaseButton) })
                 installThemedIconAnimation(deleteCaseButton)
             }
             deleteCaseButton.addActionListener { deleteCase(testCase) }
 
-            title.text = tabTitle(index, displayStatus, includeStatusIcon = theme.id != CphThemeId.AVE_MUJICA)
+            title.text = if (statusGlyph != null) {
+                index.toString()
+            } else {
+                tabTitle(index, status, includeStatusIcon = theme.id != CphThemeId.AVE_MUJICA)
+            }
             title.foreground = foreground
-            title.font = title.font.deriveFont(Font.BOLD, title.font.size2D + 2.0f)
+            title.font = title.font.deriveFont(Font.BOLD, title.font.size2D + caseTabTitleFontDelta())
             title.alignmentX = Component.LEFT_ALIGNMENT
 
-            detail.text = tabDetail(testCase, displayStatus)
+            detail.text = tabDetail(testCase, status)
             detail.foreground = theme.muted
             detail.font = detail.font.deriveFont(Font.PLAIN, detail.font.size2D - 1.0f)
             detail.alignmentX = Component.LEFT_ALIGNMENT
             toolTipText = tabTooltip(testCase, status)
 
-            val content = JPanel(BorderLayout(8, 0))
+            val content = JPanel(BorderLayout(if (theme.id == CphThemeId.AVE_MUJICA) 4 else 8, 0))
             content.background = background
             val textPanel = JPanel()
             textPanel.layout = BoxLayout(textPanel, BoxLayout.Y_AXIS)
             textPanel.background = background
-            textPanel.add(title)
+            val titleRow = if (statusGlyph != null) {
+                JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.X_AXIS)
+                    background = tabBackground
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    add(title)
+                    add(Box.createRigidArea(Dimension(2, 0)))
+                    add(statusGlyph)
+                }
+            } else {
+                null
+            }
+            textPanel.add(titleRow ?: title)
             textPanel.add(detail)
-            val actionPanel = JPanel(BorderLayout())
+            if (theme.id == CphThemeId.AVE_MUJICA) {
+                val textWidth = aveMujicaCaseTextWidth(title, statusGlyph != null)
+                val textHeight = textPanel.preferredSize.height
+                textPanel.minimumSize = Dimension(textWidth, textHeight)
+                textPanel.preferredSize = Dimension(textWidth, textHeight)
+            }
+            val actionPanel = JPanel(GridBagLayout())
             actionPanel.background = background
-            actionPanel.preferredSize = if (theme.id == CphThemeId.AVE_MUJICA) Dimension(30, 1) else Dimension(24, 1)
-            actionPanel.add(deleteCaseButton, BorderLayout.NORTH)
-            actionPanel.add(enabledToggle, BorderLayout.SOUTH)
+            actionPanel.preferredSize = Dimension(caseDeleteActionWidth(), 1)
+            val deleteConstraints = GridBagConstraints().apply {
+                gridx = 0
+                gridy = 0
+                weightx = 1.0
+                weighty = 1.0
+                anchor = GridBagConstraints.NORTHEAST
+            }
+            actionPanel.add(deleteCaseButton, deleteConstraints)
             content.add(textPanel, BorderLayout.CENTER)
             content.add(actionPanel, BorderLayout.EAST)
             content.toolTipText = toolTipText
@@ -2732,6 +3107,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             detail.toolTipText = toolTipText
             textPanel.toolTipText = toolTipText
             actionPanel.toolTipText = toolTipText
+            titleRow?.toolTipText = toolTipText
+            statusGlyph?.toolTipText = toolTipText
 
             val selectListener = object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent) {
@@ -2743,6 +3120,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             title.addMouseListener(selectListener)
             detail.addMouseListener(selectListener)
             textPanel.addMouseListener(selectListener)
+            titleRow?.addMouseListener(selectListener)
+            statusGlyph?.addMouseListener(selectListener)
 
             add(content, BorderLayout.CENTER)
         }
@@ -2757,9 +3136,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 MatteBorder(1, 1, 2, 1, theme.border),
                 EmptyBorder(3, 10, 3, 8),
             )
-            preferredSize = Dimension(123, 60)
-            minimumSize = Dimension(102, 60)
-            maximumSize = Dimension(161, 60)
+            preferredSize = caseTabPreferredSize()
+            minimumSize = caseTabMinimumSize()
+            maximumSize = caseTabMaximumSize()
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = "Add case"
 
@@ -2843,7 +3222,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
-    private class LineBackgroundPainter(private val color: Color) : Highlighter.HighlightPainter {
+    private class LineBackgroundPainter(
+        private val color: Color,
+        private val tile: BufferedImage? = null,
+        private val tileOffset: () -> Double = { 0.0 },
+    ) : Highlighter.HighlightPainter {
         override fun paint(g: Graphics, p0: Int, p1: Int, bounds: Shape, c: JTextComponent) {
             val area = c as? JBTextArea ?: return
             val line = runCatching { area.getLineOfOffset(p0.coerceAtMost(area.document.length)) }.getOrNull() ?: return
@@ -2858,8 +3241,29 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             val nextY = nextOffset?.let { c.modelToView2D(it)?.y?.toInt() }
             val y = start.y.toInt()
             val rowHeight = (nextY?.minus(y) ?: height).coerceAtLeast(height)
-            g.color = color
-            g.fillRect(0, y, c.width, rowHeight)
+            if (tile == null) {
+                g.color = color
+                g.fillRect(0, y, c.width, rowHeight)
+                return
+            }
+
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.color = color
+                g2.fillRect(0, y, c.width, rowHeight)
+                g2.paint = TexturePaint(
+                    tile,
+                    Rectangle2D.Double(
+                        -tileOffset(),
+                        y.toDouble(),
+                        tile.width.toDouble(),
+                        tile.height.toDouble(),
+                    ),
+                )
+                g2.fillRect(0, y, c.width, rowHeight)
+            } finally {
+                g2.dispose()
+            }
         }
     }
 
@@ -2878,7 +3282,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         RUN_SELECTED,
     }
 
-    private enum class PluginTab(val cardName: String) {
+    private enum class SettingsPanelTab(val cardName: String) {
+        SETTINGS("settings"),
         UTILITY("utility"),
         THEMES("themes"),
     }
@@ -2886,14 +3291,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private enum class TabStatus(
         val label: String,
         val icon: String,
+        val glyphName: String? = null,
+        val wideGlyph: Boolean = false,
     ) {
-        OK("OK", "✓"),
-        AC("AC", "✓"),
-        WA("WA", "✕"),
-        TLE("TLE", "◷"),
-        RE("RE", "!"),
-        ERROR("ERR", "!"),
-        RUNNING("RUN", "●"),
+        OK("OK", "✓", "ok"),
+        AC("AC", "✓", "ac"),
+        WA("WA", "✕", "wa"),
+        TLE("TLE", "◷", "tle", true),
+        RE("RE", "!", "re"),
+        ERROR("ERR", "!", "err", true),
+        RUNNING("RUN", "●", "run", true),
         QUEUED("...", "○"),
         NOT_RUN("-", "○"),
     }
@@ -2904,45 +3311,59 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val border: Color,
     )
 
+    private data class StatusGlyphColors(
+        val dark: Color,
+        val base: Color,
+        val highlight: Color,
+    )
+
     private class HighQualityPngIcon(
         private val image: BufferedImage,
-        private val size: Int,
+        private val targetWidth: Int,
+        private val targetHeight: Int,
+        private val sourceRect: Rectangle? = null,
     ) : Icon {
-        private val renderedByScale = mutableMapOf<Int, BufferedImage>()
+        constructor(image: BufferedImage, size: Int, sourceRect: Rectangle? = null) : this(image, size, size, sourceRect)
 
-        override fun getIconWidth(): Int = size
+        private val renderedByScale = mutableMapOf<String, BufferedImage>()
 
-        override fun getIconHeight(): Int = size
+        override fun getIconWidth(): Int = targetWidth
+
+        override fun getIconHeight(): Int = targetHeight
 
         override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
             val g2 = g.create() as Graphics2D
             try {
                 val scale = JBUIScale.sysScale(g2).coerceAtLeast(1.0f)
-                val deviceSize = (size * scale).roundToInt().coerceAtLeast(size)
-                val rendered = renderedByScale.getOrPut(deviceSize) {
-                    renderForDeviceSize(deviceSize)
+                val deviceWidth = (targetWidth * scale).roundToInt().coerceAtLeast(targetWidth)
+                val deviceHeight = (targetHeight * scale).roundToInt().coerceAtLeast(targetHeight)
+                val rendered = renderedByScale.getOrPut("$deviceWidth:$deviceHeight") {
+                    renderForDeviceSize(deviceWidth, deviceHeight)
                 }
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
                 g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY)
                 g2.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY)
-                g2.drawImage(rendered, x, y, size, size, null)
+                g2.drawImage(rendered, x, y, targetWidth, targetHeight, null)
             } finally {
                 g2.dispose()
             }
         }
 
-        private fun renderForDeviceSize(deviceSize: Int): BufferedImage {
+        private fun renderForDeviceSize(deviceWidth: Int, deviceHeight: Int): BufferedImage {
             var current: BufferedImage = image
-            var width = image.width
-            var height = image.height
-            while (width / 2 >= deviceSize && height / 2 >= deviceSize) {
+            var width = sourceRect?.width ?: image.width
+            var height = sourceRect?.height ?: image.height
+            if (sourceRect != null) {
+                current = current.getSubimage(sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height)
+            }
+            while (width / 2 >= deviceWidth && height / 2 >= deviceHeight) {
                 width /= 2
                 height /= 2
                 current = resizeImage(current, width, height)
             }
-            return resizeImage(current, deviceSize, deviceSize)
+            return resizeImage(current, deviceWidth, deviceHeight)
         }
 
         private fun resizeImage(source: BufferedImage, width: Int, height: Int): BufferedImage {
@@ -2962,15 +3383,200 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private class HorizontalIcon(
+        private val left: Icon,
+        private val right: Icon,
+        private val gap: Int,
+    ) : Icon {
+        override fun getIconWidth(): Int = left.iconWidth + gap + right.iconWidth
+
+        override fun getIconHeight(): Int = maxOf(left.iconHeight, right.iconHeight)
+
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val leftY = y + (iconHeight - left.iconHeight) / 2
+            val rightY = y + (iconHeight - right.iconHeight) / 2
+            left.paintIcon(c, g, x, leftY)
+            right.paintIcon(c, g, x + left.iconWidth + gap, rightY)
+        }
+    }
+
+    private class HelpGlyphIcon(
+        private val color: Color,
+        private val size: Int,
+    ) : Icon {
+        override fun getIconWidth(): Int = size
+
+        override fun getIconHeight(): Int = size
+
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(color.red, color.green, color.blue, 70)
+                g2.drawOval(x + 1, y + 1, size - 3, size - 3)
+                g2.color = color
+                val baseFont = c?.font ?: g2.font
+                g2.font = baseFont.deriveFont(Font.BOLD, size * 0.82f)
+                val metrics = g2.fontMetrics
+                val text = "?"
+                val textX = x + (size - metrics.stringWidth(text)) / 2
+                val textY = y + (size - metrics.height) / 2 + metrics.ascent - 1
+                g2.drawString(text, textX, textY)
+            } finally {
+                g2.dispose()
+            }
+        }
+    }
+
+    private class AveMujicaStatusGlyph(
+        private val mask: BufferedImage,
+        private val colors: StatusGlyphColors,
+        private val textureOffset: () -> Double,
+    ) : JComponent() {
+        private val sourceRect = visibleAlphaRect(mask)
+
+        init {
+            isOpaque = false
+        }
+
+        override fun paintComponent(g: Graphics) {
+            super.paintComponent(g)
+            val rect = sourceRect ?: return
+            if (width <= 0 || height <= 0) return
+
+            val scale = minOf(width.toDouble() / rect.width, height.toDouble() / rect.height)
+            val drawWidth = (rect.width * scale).roundToInt().coerceAtLeast(1)
+            val drawHeight = (rect.height * scale).roundToInt().coerceAtLeast(1)
+            val rendered = BufferedImage(drawWidth, drawHeight, BufferedImage.TYPE_INT_ARGB)
+            val g2 = rendered.createGraphics()
+            try {
+                applyQualityHints(g2)
+                paintStatusTexture(g2, drawWidth, drawHeight, textureOffset())
+                g2.composite = AlphaComposite.DstIn
+                g2.drawImage(
+                    mask.getSubimage(rect.x, rect.y, rect.width, rect.height),
+                    0,
+                    0,
+                    drawWidth,
+                    drawHeight,
+                    null,
+                )
+            } finally {
+                g2.dispose()
+            }
+
+            val out = g.create() as Graphics2D
+            try {
+                applyQualityHints(out)
+                out.drawImage(rendered, (width - drawWidth) / 2, (height - drawHeight) / 2, null)
+            } finally {
+                out.dispose()
+            }
+        }
+
+        private fun paintStatusTexture(g2: Graphics2D, width: Int, height: Int, offset: Double) {
+            g2.paint = GradientPaint(
+                0f,
+                0f,
+                colors.base,
+                0f,
+                height.toFloat(),
+                colors.dark,
+                false,
+            )
+            g2.fillRect(0, 0, width, height)
+
+            val highlightWidth = AVE_MUJICA_STATUS_GLYPH_HIGHLIGHT_WIDTH
+            val travel = AVE_MUJICA_STATUS_GLYPH_FLOW_CYCLE_WIDTH
+            val x = (offset % travel) - highlightWidth
+            val transparentHighlight = Color(colors.highlight.red, colors.highlight.green, colors.highlight.blue, 0)
+            g2.paint = LinearGradientPaint(
+                x.toFloat(),
+                0f,
+                (x + highlightWidth).toFloat(),
+                0f,
+                floatArrayOf(0f, 0.5f, 1f),
+                arrayOf(
+                    transparentHighlight,
+                    Color(colors.highlight.red, colors.highlight.green, colors.highlight.blue, 150),
+                    transparentHighlight,
+                ),
+            )
+            g2.fill(Rectangle2D.Double(x, 0.0, highlightWidth, height.toDouble()))
+        }
+
+        private fun applyQualityHints(g2: Graphics2D) {
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+            g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY)
+            g2.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY)
+        }
+
+        companion object {
+            fun preferredSizeFor(image: BufferedImage, wideGlyph: Boolean): Dimension {
+                val rect = visibleAlphaRect(image)
+                val targetWidth = if (wideGlyph) {
+                    AVE_MUJICA_STATUS_GLYPH_WIDE_WIDTH
+                } else {
+                    AVE_MUJICA_STATUS_GLYPH_NARROW_WIDTH
+                }
+                if (rect == null) return Dimension(targetWidth, AVE_MUJICA_STATUS_GLYPH_HEIGHT)
+
+                val proportionalWidth = (rect.width.toDouble() / rect.height * AVE_MUJICA_STATUS_GLYPH_HEIGHT)
+                    .roundToInt()
+                val width = maxOf(targetWidth, proportionalWidth)
+                    .coerceAtMost(if (wideGlyph) AVE_MUJICA_STATUS_GLYPH_WIDE_MAX_WIDTH else targetWidth + 4)
+                return Dimension(width, AVE_MUJICA_STATUS_GLYPH_HEIGHT)
+            }
+
+            private fun visibleAlphaRect(image: BufferedImage): Rectangle? {
+                var minX = image.width
+                var minY = image.height
+                var maxX = -1
+                var maxY = -1
+                for (y in 0 until image.height) {
+                    for (x in 0 until image.width) {
+                        val alpha = image.getRGB(x, y) ushr 24
+                        if (alpha > AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD) {
+                            minX = minOf(minX, x)
+                            minY = minOf(minY, y)
+                            maxX = maxOf(maxX, x)
+                            maxY = maxOf(maxY, y)
+                        }
+                    }
+                }
+                if (maxX < minX || maxY < minY) return null
+                return Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1)
+            }
+
+        }
+    }
+
     private companion object {
         private const val MAIN_VIEW_CARD = "main"
         private const val SETTINGS_VIEW_CARD = "settings"
-        private const val PLUGINS_VIEW_CARD = "plugins"
         private const val RESIZE_HANDLE_HEIGHT = 8
         private const val OUTPUT_DIVIDER_SIZE = 6
         private const val TAB_STRIP_BASE_HEIGHT = 62
+        private const val AVE_MUJICA_TAB_STRIP_BASE_HEIGHT = 66
+        private const val AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD = 8
+        private const val AVE_MUJICA_ICON_TRIM_PADDING_SCALE = 1.12
+        private const val AVE_MUJICA_LINE_HIGHLIGHT_TILE = "/icons/avemujica/highlight/line_tile.png"
+        private const val AVE_MUJICA_FLOW_ANIMATION_DELAY_MILLIS = 16
+        private const val AVE_MUJICA_LINE_HIGHLIGHT_PIXELS_PER_SECOND = 36.0
+        private const val AVE_MUJICA_LINE_HIGHLIGHT_TILE_FALLBACK_WIDTH = 256
+        private const val AVE_MUJICA_STATUS_GLYPH_PIXELS_PER_SECOND = 58.0
+        private const val AVE_MUJICA_STATUS_GLYPH_HIGHLIGHT_WIDTH = 32.0
+        private const val AVE_MUJICA_STATUS_GLYPH_FLOW_CYCLE_WIDTH = 96.0
+        private const val AVE_MUJICA_STATUS_GLYPH_NARROW_WIDTH = 42
+        private const val AVE_MUJICA_STATUS_GLYPH_WIDE_WIDTH = 56
+        private const val AVE_MUJICA_STATUS_GLYPH_WIDE_MAX_WIDTH = 60
+        private const val AVE_MUJICA_STATUS_GLYPH_HEIGHT = 25
+        private const val AVE_MUJICA_STATUS_ROW_WIDTH = 76
         private const val COMPILE_OPTIONS_SYNC_DELAY_MILLIS = 650
         private const val SUBMISSION_STATUS_VISIBLE_MILLIS = 15_000
+        private const val MAX_PARALLEL_CASE_RUNS = 8
         private val SUBMIT_SPINNER_FRAMES = arrayOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
         private val RUN_SPINNER_FRAMES = arrayOf("○", "◔", "◑", "◕")
         private const val RUN_ALL_BUTTON_TEXT = "▷"
@@ -2978,6 +3584,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val CPH_DOCS_URL = "https://cph.kkkzbh.cn"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
         private const val AVE_MUJICA_FONT_RESOURCE = "/fonts/AnglicanText.ttf"
+        private const val AVE_MUJICA_HELP_TEXT_RESOURCE = "/icons/avemujica/standalone/help_text.png"
+        private const val AVE_MUJICA_HELP_TEXT_HEIGHT = 28
+        private const val AVE_MUJICA_HELP_ICON_TEXT_GAP = 7
+        private const val AVE_MUJICA_THEME_TITLE_RESOURCE = "/icons/avemujica/standalone/theme_title.png"
+        private const val AVE_MUJICA_THEME_TITLE_HEIGHT = 32
         private const val AVE_MUJICA_ANIMATION_DELAY_MILLIS = 70
         private const val AVE_MUJICA_ANIMATION_FRAME_COUNT = 8
         private const val AVE_MUJICA_ICON_NAME_PROPERTY = "cph.aveMujica.iconName"
@@ -2985,7 +3596,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val AVE_MUJICA_ICON_FRAME_PROPERTY = "cph.aveMujica.iconFrame"
         private const val AVE_MUJICA_ANIMATION_CONFIGURED_PROPERTY = "cph.aveMujica.animationConfigured"
         private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
-        private const val PLUGIN_TAB_CONFIGURED_PROPERTY = "cph.pluginTab.configured"
+        private const val SETTINGS_TAB_CONFIGURED_PROPERTY = "cph.settingsTab.configured"
         private const val BASE_FONT_PROPERTY = "cph.baseFont"
 
         private fun tabTitle(index: Int, status: TabStatus, includeStatusIcon: Boolean = true): String {
