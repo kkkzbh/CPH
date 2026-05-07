@@ -8,11 +8,8 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Run all sample cases in parallel after a single pre-build step, while keeping every pending case in the RUN state until its result is ready.</li>
-          <li>Preserve CMake and C/C++ File build caching, including correct rebuilds after unsaved editor changes are saved automatically before running.</li>
-          <li>Refresh the Ave Mujica theme with smoother flowing status glyphs, vertical gradients, generated toolbar art, and themed settings/help visuals.</li>
-          <li>Move plugin utilities and theme controls into a unified settings panel with dedicated tabs.</li>
-          <li>Bump the plugin release to 1.1.0.</li>
+          <li>Fix the first C/C++ File sample run on CLion 2026.1 failing with a missing ProgressIndicator or Job context.</li>
+          <li>Prepare the CLion command line before parallel case execution and copy it per case to keep sample runs isolated.</li>
         </ul>
     ]]></change-notes>
 

@@ -72,9 +72,13 @@ internal sealed class CphPreparedRunTarget {
     ) : CphPreparedRunTarget()
 
     data class CppFile(
-        val settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        val commandLine: GeneralCommandLine,
     ) : CphPreparedRunTarget()
 }
+
+internal fun copyCphCommandLine(source: GeneralCommandLine): GeneralCommandLine = CphCommandLineCopy(source)
+
+private class CphCommandLineCopy(source: GeneralCommandLine) : GeneralCommandLine(source)
 
 internal sealed class CphRunPreparation {
     data class Ready(val target: CphPreparedRunTarget) : CphRunPreparation()
@@ -140,10 +144,8 @@ class CphRunner(private val project: Project) {
                     runnerLabel = "fallback executable runner",
                 )
                 is CphPreparedRunTarget.CppFile -> {
-                    val context = buildDefaultRunContext(target.settings)
-                    val commandLine = resolveCppFileCommandLine(target.settings, context.executor, context.environment)
                     runCommandLine(
-                        commandLine = commandLine,
+                        commandLine = copyCphCommandLine(target.commandLine),
                         testCase = testCase,
                         timeoutMillis = timeoutMillis,
                         ignoreTrailingWhitespace = ignoreTrailingWhitespace,
@@ -233,7 +235,8 @@ class CphRunner(private val project: Project) {
             val context = buildDefaultRunContext(settings)
             val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
             if (buildResult != null) return CphRunPreparation.Failed(buildResult)
-            CphRunPreparation.Ready(CphPreparedRunTarget.CppFile(settings))
+            val commandLine = resolveCppFileCommandLine(settings, context.executor, context.environment)
+            CphRunPreparation.Ready(CphPreparedRunTarget.CppFile(commandLine))
         } catch (e: Exception) {
             CphRunPreparation.Failed(
                 CphCaseResult(
