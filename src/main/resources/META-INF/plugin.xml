@@ -8,8 +8,8 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Fix the first C/C++ File sample run on CLion 2026.1 failing with a missing ProgressIndicator or Job context.</li>
-          <li>Prepare the CLion command line before parallel case execution and copy it per case to keep sample runs isolated.</li>
+          <li>Fix mouse-wheel scrolling inside the Input, Actual output, and Expected output editors.</li>
+          <li>Keep Ctrl+mouse-wheel font resizing while forwarding normal wheel events to the editor scroll panes.</li>
         </ul>
     ]]></change-notes>
 
