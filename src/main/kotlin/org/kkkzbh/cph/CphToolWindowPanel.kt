@@ -94,6 +94,7 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseWheelEvent
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -2193,12 +2194,48 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun installEditorFontWheel(area: JBTextArea) {
         area.addMouseWheelListener { event ->
-            if (!event.isControlDown) return@addMouseWheelListener
-            event.consume()
-            val delta = if (event.preciseWheelRotation < 0.0) 1 else -1
-            val current = stateService.getState().ui.editorFontSize
-            setEditorFontSize(current + delta, persist = true)
+            if (event.isControlDown) {
+                event.consume()
+                val delta = if (event.preciseWheelRotation < 0.0) 1 else -1
+                val current = stateService.getState().ui.editorFontSize
+                setEditorFontSize(current + delta, persist = true)
+                return@addMouseWheelListener
+            }
+
+            forwardWheelToScrollPane(area, event)
         }
+    }
+
+    private fun forwardWheelToScrollPane(area: JBTextArea, event: MouseWheelEvent) {
+        val scrollPane = enclosingScrollPane(area) ?: return
+        val point = SwingUtilities.convertPoint(area, event.point, scrollPane)
+        val forwarded = MouseWheelEvent(
+            scrollPane,
+            event.id,
+            event.`when`,
+            event.modifiersEx,
+            point.x,
+            point.y,
+            event.xOnScreen,
+            event.yOnScreen,
+            event.clickCount,
+            event.isPopupTrigger,
+            event.scrollType,
+            event.scrollAmount,
+            event.wheelRotation,
+            event.preciseWheelRotation,
+        )
+        scrollPane.dispatchEvent(forwarded)
+        event.consume()
+    }
+
+    private fun enclosingScrollPane(component: Component): JScrollPane? {
+        var current = component.parent
+        while (current != null) {
+            if (current is JScrollPane) return current
+            current = current.parent
+        }
+        return null
     }
 
     private fun setEditorFontSize(size: Int, persist: Boolean) {
