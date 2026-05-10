@@ -8,8 +8,10 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Fix mouse-wheel scrolling inside the Input, Actual output, and Expected output editors.</li>
-          <li>Keep Ctrl+mouse-wheel font resizing while forwarding normal wheel events to the editor scroll panes.</li>
+          <li>Add a per-project CPH startup gate so new CLion projects only enable CPH after clicking Start CPH.</li>
+          <li>Refresh the first-run welcome panel with the high-resolution CPH icon and a themed Start CPH button.</li>
+          <li>Increase the default sample editor font size to 17.</li>
+          <li>Add localized UI text, improved error reports, and more robust sample run process handling.</li>
         </ul>
     ]]></change-notes>
 
