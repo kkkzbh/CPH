@@ -16,11 +16,11 @@ internal data class CphShortcutSettingsState(
     var submitShortcut: String = "",
 )
 
-internal enum class CphShortcutAction(val displayName: String) {
-    RUN_ALL("全局运行快捷键"),
-    RUN_SELECTED_CASE("单CASE运行快捷键"),
-    DEBUG_SELECTED_CASE("单CASE调试快捷键"),
-    SUBMIT("提交CF快捷键"),
+internal enum class CphShortcutAction {
+    RUN_ALL,
+    RUN_SELECTED_CASE,
+    DEBUG_SELECTED_CASE,
+    SUBMIT,
 }
 
 internal object CphShortcutMatcher {
@@ -81,13 +81,13 @@ internal object CphShortcutMatcher {
     fun toStorageString(keyStroke: KeyStroke): String = keyStroke.toString()
 
     fun displayShortcut(text: String): String {
-        val keyStroke = parseShortcut(text) ?: return "未设置"
-        return KeymapUtil.getKeystrokeText(keyStroke)
+        return displayShortcut(text, CphUiLanguage.current())
     }
 
     fun duplicateShortcutMessage(
         state: CphShortcutSettingsState,
         codeforcesSubmitEnabled: Boolean = true,
+        language: CphUiLanguage = CphUiLanguage.current(),
     ): String? {
         val duplicates = rawShortcutEntries(state, codeforcesSubmitEnabled)
             .filter { it.second.isNotBlank() }
@@ -97,8 +97,14 @@ internal object CphShortcutMatcher {
             .firstOrNull { it.size > 1 }
             ?: return null
 
-        val names = duplicates.joinToString("、") { it.first.displayName }
-        return "$names 使用了相同快捷键：${displayShortcut(duplicates.first().second)}"
+        val text = CphText.forLanguage(language)
+        val names = duplicates.map { text.shortcutActionName(it.first) }
+        return text.duplicateShortcutMessage(names, displayShortcut(duplicates.first().second, language))
+    }
+
+    private fun displayShortcut(text: String, language: CphUiLanguage): String {
+        val keyStroke = parseShortcut(text) ?: return CphText.forLanguage(language).unsetShortcut
+        return KeymapUtil.getKeystrokeText(keyStroke)
     }
 
     private fun configuredShortcuts(

@@ -16,7 +16,7 @@ internal const val CPH_DEFAULT_EXPECTED_HEIGHT = 135
 internal const val CPH_DEFAULT_ACTUAL_HEIGHT = 135
 internal const val CPH_MIN_EDITOR_HEIGHT = 80
 internal const val CPH_MAX_EDITOR_HEIGHT = 800
-internal const val CPH_DEFAULT_EDITOR_FONT_SIZE = 13
+internal const val CPH_DEFAULT_EDITOR_FONT_SIZE = 17
 internal const val CPH_MIN_EDITOR_FONT_SIZE = 10
 internal const val CPH_MAX_EDITOR_FONT_SIZE = 28
 internal const val CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY = ".cph/"
@@ -82,6 +82,7 @@ data class CphState(
     var targets: MutableMap<String, CphTargetCases> = linkedMapOf(),
     var compileSettings: CphGlobalCompileSettings = CphGlobalCompileSettings(),
     var ui: CphUiState = CphUiState(),
+    var cphEnabled: Boolean = false,
     var singleFileModeEnabled: Boolean = true,
     var singleFileWorkingDirectory: String = CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY,
 )
@@ -102,6 +103,9 @@ class CphStateService : PersistentStateComponent<CphState> {
     override fun getState(): CphState = state
 
     override fun loadState(state: CphState) {
+        if (!state.cphEnabled && state.targets.isNotEmpty()) {
+            state.cphEnabled = true
+        }
         state.targets.values.forEach {
             it.timeoutMillis = it.timeoutMillis.coerceIn(CPH_MIN_TIMEOUT_MILLIS, CPH_MAX_TIMEOUT_MILLIS)
         }

@@ -14,6 +14,7 @@ class CphPluginSettingsTest {
 
         assertFalse(service.state.codeforcesRemoteSubmitEnabled)
         assertEquals(CphThemeId.CLASSIC, service.state.selectedThemeId)
+        assertEquals(CphUiLanguage.ZH_CN.id, service.state.uiLanguage)
     }
 
     @Test
@@ -24,6 +25,35 @@ class CphPluginSettingsTest {
 
         assertTrue(service.state.codeforcesRemoteSubmitEnabled)
         assertEquals(CphThemeId.CLASSIC, service.state.selectedThemeId)
+        assertEquals(CphUiLanguage.ZH_CN.id, service.state.uiLanguage)
+    }
+
+    @Test
+    fun uiLanguageDefaultsToSimplifiedChinese() {
+        val service = CphPluginSettings()
+
+        assertEquals(CphUiLanguage.ZH_CN.id, service.state.uiLanguage)
+    }
+
+    @Test
+    fun persistedEnglishUiLanguageLoads() {
+        val service = CphPluginSettings()
+
+        service.loadState(CphPluginSettingsState(uiLanguage = CphUiLanguage.ENGLISH.id))
+
+        assertEquals(CphUiLanguage.ENGLISH.id, service.state.uiLanguage)
+    }
+
+    @Test
+    fun uiLanguageNormalizeAcceptsSupportedValues() {
+        assertEquals(CphUiLanguage.ENGLISH, CphUiLanguage.normalize("en"))
+        assertEquals(CphUiLanguage.ZH_CN, CphUiLanguage.normalize("zh_cn"))
+    }
+
+    @Test
+    fun uiLanguageNormalizeFallsBackToSimplifiedChinese() {
+        assertEquals(CphUiLanguage.ZH_CN, CphUiLanguage.normalize(null))
+        assertEquals(CphUiLanguage.ZH_CN, CphUiLanguage.normalize("unknown"))
     }
 
     @Test

@@ -14,7 +14,8 @@ enum class CphCppStandard(
     CPP23("C++23", "-std=c++23", "23"),
     CPP26("C++26", "-std=c++26", "26");
 
-    override fun toString(): String = displayName
+    override fun toString(): String =
+        if (this == FOLLOW_TARGET) CphText.current().cppFollowTarget else displayName
 }
 
 data class CphCompileSettings(

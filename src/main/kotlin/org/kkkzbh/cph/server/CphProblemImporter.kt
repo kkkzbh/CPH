@@ -50,6 +50,10 @@ internal class CphProblemImporter(private val project: Project) {
     }
 
     private fun doImport(payload: CompetitiveCompanionPayload): CphImportOutcome {
+        val stateService = CphStateService.getInstance(project)
+        if (!stateService.getState().cphEnabled) {
+            return CphImportOutcome(success = false, message = "CPH is not enabled for this project.")
+        }
         val settings = CphImportSettings.getInstance().state
         val coords = CphImportPaths.coordinates(payload)
         val relativePath = CphImportPaths.render(settings.pathTemplate, coords)
@@ -69,11 +73,10 @@ internal class CphProblemImporter(private val project: Project) {
                 project = project,
                 sourceFile = sourceFile,
                 displayName = payload.name.ifBlank { coords.index },
-                workingDirectory = CphStateService.getInstance(project).getState().singleFileWorkingDirectory,
+                workingDirectory = stateService.getState().singleFileWorkingDirectory,
             )
             val identity = CphTargetResolver.fromSettings(result.settings)
-            val service = CphStateService.getInstance(project)
-            val targetCases = service.getOrCreateTargetCases(identity)
+            val targetCases = stateService.getOrCreateTargetCases(identity)
             applyCases(targetCases, payload)
             RunManager.getInstance(project).selectedConfiguration = result.settings
             project.messageBus.syncPublisher(CphCasesChangedListener.TOPIC).targetCasesChanged(identity.id)

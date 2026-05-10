@@ -90,8 +90,7 @@ internal class CphShortcutTextField : JBTextField() {
 
     init {
         isEditable = false
-        emptyText.text = "未设置"
-        toolTipText = "按下快捷键组合；Esc、Backspace 或 Delete 清空。"
+        refreshLocalizedText()
         addFocusListener(object : FocusAdapter() {
             override fun focusGained(e: FocusEvent) {
                 CphShortcutCaptureState.start(this@CphShortcutTextField)
@@ -101,6 +100,12 @@ internal class CphShortcutTextField : JBTextField() {
                 CphShortcutCaptureState.stop(this@CphShortcutTextField)
             }
         })
+    }
+
+    fun refreshLocalizedText() {
+        val text = CphText.current()
+        emptyText.text = text.unsetShortcut
+        toolTipText = text.shortcutTooltip
     }
 
     fun setStoredShortcut(value: String, notify: Boolean = true) {

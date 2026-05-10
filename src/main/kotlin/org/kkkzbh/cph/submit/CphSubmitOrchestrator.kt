@@ -15,6 +15,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphText
 import java.util.UUID
 
 internal data class CphSubmitBridgeJob(
@@ -92,36 +93,40 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             publishIdle()
             return
         }
+        if (!CphStateService.getInstance(project).state.cphEnabled) {
+            publishIdle()
+            return
+        }
         synchronized(lock) {
             if (activeJob != null || pendingJob != null) {
-                balloon("A submission is already in flight.", NotificationType.WARNING)
+                balloon(CphText.current().submitAlreadyInFlight(), NotificationType.WARNING)
                 return
             }
         }
 
         try {
             if (!CphStateService.getInstance(project).state.singleFileModeEnabled) {
-                warnAndIdle("Codeforces submit requires pure single-file mode. Enable pure single-file mode in CPH settings first.")
+                warnAndIdle(CphText.current().submitRequiresSingleFile())
                 return
             }
             val tab = CphActiveTabService.getInstance().current()
             if (tab == null) {
-                warnAndIdle("No active Codeforces tab — install/open the CPH Target Runner browser extension and focus a CF problem page.")
+                warnAndIdle(CphText.current().submitNoActiveTab())
                 return
             }
             val ctx = CphSubmitContextResolver.resolve(tab.url)
             if (ctx == null) {
-                warnAndIdle("Active tab is not a Codeforces problem page: ${tab.url}")
+                warnAndIdle(CphText.current().submitActiveTabInvalid(tab.url))
                 return
             }
             val sourceFile = currentSourceFile()
             if (sourceFile == null) {
-                warnAndIdle("No editor is open. Switch to a .cpp/.cc file and click Submit again.")
+                warnAndIdle(CphText.current().submitNoEditor())
                 return
             }
             if (!isSupportedSource(sourceFile)) {
                 warnAndIdle(
-                    "Only C++ files (.cpp/.cc/.cxx/.cp) are supported by CPH submit (got .${sourceFile.extension ?: "?"}).",
+                    CphText.current().submitUnsupportedSource(sourceFile.extension ?: "?"),
                 )
                 return
             }
@@ -141,7 +146,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
                 CphSubmissionStatus(
                     phase = CphSubmissionPhase.SUBMITTING,
                     displayId = ctx.displayId,
-                    text = "→ ${ctx.displayId}  Waiting for CPH Target Runner browser extension…",
+                    text = CphText.current().submitWaitingForBrowser(ctx.displayId),
                 ),
             )
             startTimeoutWatch(job)
@@ -162,7 +167,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             CphSubmissionStatus(
                 phase = CphSubmissionPhase.SUBMITTING,
                 displayId = job.context.displayId,
-                text = "→ ${job.context.displayId}  Browser received source…",
+                text = CphText.current().submitBrowserReceived(job.context.displayId),
             ),
         )
         return job
@@ -180,7 +185,11 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             active
         }
         val text = update.text.ifBlank {
-            if (update.phase == CphSubmissionPhase.ERROR) "Failed: ${update.errorDetail ?: "unknown error"}" else update.phase.name
+            if (update.phase == CphSubmissionPhase.ERROR) {
+                CphText.current().submitFailed(update.errorDetail ?: "unknown error")
+            } else {
+                update.phase.name
+            }
         }
         publish(
             CphSubmissionStatus(
@@ -215,7 +224,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
                 expired
             }
             if (expiredBeforePickup) {
-                fail(job.context.displayId, "CPH Target Runner browser extension did not pick up the submit request. Focus the CF problem tab and check the extension.", null)
+                fail(job.context.displayId, CphText.current().submitPickupTimeout(), null)
                 return@executeOnPooledThread
             }
 
@@ -229,7 +238,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
                 expired
             }
             if (expiredAfterPickup) {
-                fail(job.context.displayId, "Submission timed out before a final Codeforces verdict.", null)
+                fail(job.context.displayId, CphText.current().submitVerdictTimeout(), null)
             }
         }
     }
@@ -254,7 +263,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             CphSubmissionStatus(
                 phase = CphSubmissionPhase.ERROR,
                 displayId = displayId.orEmpty(),
-                text = "Failed: $message",
+                text = CphText.current().submitFailed(message),
                 errorDetail = message,
             ),
         )

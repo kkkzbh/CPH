@@ -85,11 +85,15 @@ internal sealed class CphRunPreparation {
     data class Failed(val result: CphCaseResult) : CphRunPreparation()
 }
 
-class CphRunner(private val project: Project) {
+internal class CphRunner(
+    private val project: Project,
+    private val processRunner: CphProcessRunner = CphProcessRunner(),
+) {
     private val log = Logger.getInstance(CphRunner::class.java)
     private val cppFileBuildCache = project.service<CphCppFileBuildCache>()
     private val preparedBuilds = linkedMapOf<String, CphCaseResult?>()
     private val cppFileBuildLock = Any()
+    private val caseProcessExecutor = CphCaseProcessExecutor(processRunner)
 
     fun runCase(
         identity: CphTargetIdentity,
@@ -235,7 +239,15 @@ class CphRunner(private val project: Project) {
             val context = buildDefaultRunContext(settings)
             val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
             if (buildResult != null) return CphRunPreparation.Failed(buildResult)
-            val commandLine = resolveCppFileCommandLine(settings, context.executor, context.environment)
+            val commandLine = when (val resolution = resolveCppFileCommandLineRecovering(
+                settings = settings,
+                executor = context.executor,
+                environment = context.environment,
+                startedAt = setupStartedAt,
+            )) {
+                is CppFileCommandLineResolution.Ready -> resolution.commandLine
+                is CppFileCommandLineResolution.Failed -> return CphRunPreparation.Failed(resolution.result)
+            }
             CphRunPreparation.Ready(CphPreparedRunTarget.CppFile(commandLine))
         } catch (e: Exception) {
             CphRunPreparation.Failed(
@@ -261,7 +273,15 @@ class CphRunner(private val project: Project) {
             val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
             if (buildResult != null) return buildResult
 
-            val commandLine = resolveCppFileCommandLine(settings, context.executor, context.environment)
+            val commandLine = when (val resolution = resolveCppFileCommandLineRecovering(
+                settings = settings,
+                executor = context.executor,
+                environment = context.environment,
+                startedAt = setupStartedAt,
+            )) {
+                is CppFileCommandLineResolution.Ready -> resolution.commandLine
+                is CppFileCommandLineResolution.Failed -> return resolution.result
+            }
             runCommandLine(
                 commandLine = commandLine,
                 testCase = testCase,
@@ -366,70 +386,14 @@ class CphRunner(private val project: Project) {
         compareExpectedOutput: Boolean,
         runnerLabel: String,
     ): CphCaseResult {
-        val startedAt = System.nanoTime()
-        val process = startProcess()
-
-        val stdoutFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-            process.inputStream.bufferedReader().readText()
-        }
-        val stderrFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-            process.errorStream.bufferedReader().readText()
-        }
-
-        process.outputStream.use { stream ->
-            stream.write(testCase.input.toByteArray(StandardCharsets.UTF_8))
-            stream.flush()
-        }
-
-        val finished = process.waitFor(timeoutMillis.coerceAtLeast(1) + 100, TimeUnit.MILLISECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            return CphCaseResult(
-                verdict = CphVerdict.TLE,
-                actualOutput = stdoutFuture.getNow(""),
-                stderr = stderrFuture.getNow(""),
-                durationMillis = elapsedMillis(startedAt),
-                message = "Time limit exceeded after ${timeoutMillis}ms.",
-            )
-        }
-
-        val actualOutput = stdoutFuture.get(1, TimeUnit.SECONDS)
-        val stderr = stderrFuture.get(1, TimeUnit.SECONDS)
-        val exitCode = process.exitValue()
-        if (exitCode != 0) {
-            return CphCaseResult(
-                verdict = CphVerdict.RE,
-                actualOutput = actualOutput,
-                stderr = stderr,
-                exitCode = exitCode,
-                durationMillis = elapsedMillis(startedAt),
-                message = "Process exited with code $exitCode.",
-            )
-        }
-
-        if (!compareExpectedOutput) {
-            return CphCaseResult(
-                verdict = CphVerdict.OK,
-                actualOutput = actualOutput,
-                stderr = stderr,
-                exitCode = exitCode,
-                durationMillis = elapsedMillis(startedAt),
-                message = "Process completed successfully ($runnerLabel)",
-            )
-        }
-
-        val (accepted, message) = CphComparator.compare(
-            actual = actualOutput,
-            expected = testCase.expectedOutput,
+        return caseProcessExecutor.run(
+            startProcess = startProcess,
+            input = testCase.input,
+            expectedOutput = testCase.expectedOutput,
+            timeoutMillis = timeoutMillis,
             ignoreTrailingWhitespace = ignoreTrailingWhitespace,
-        )
-        return CphCaseResult(
-            verdict = if (accepted) CphVerdict.AC else CphVerdict.WA,
-            actualOutput = actualOutput,
-            stderr = stderr,
-            exitCode = exitCode,
-            durationMillis = elapsedMillis(startedAt),
-            message = "$message ($runnerLabel)",
+            compareExpectedOutput = compareExpectedOutput,
+            runnerLabel = runnerLabel,
         )
     }
 
@@ -455,6 +419,14 @@ class CphRunner(private val project: Project) {
         STALE,
         UNKNOWN,
     }
+
+    private sealed class CppFileCommandLineResolution {
+        data class Ready(val commandLine: GeneralCommandLine) : CppFileCommandLineResolution()
+        data class Failed(val result: CphCaseResult) : CppFileCommandLineResolution()
+    }
+
+    private class CppFileExecutableNotReadyException(val executable: File) :
+        ExecutionException("Executable is not ready: ${executable.absolutePath}")
 
     private fun prepareBuildTarget(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
@@ -558,9 +530,10 @@ class CphRunner(private val project: Project) {
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
         environment: ExecutionEnvironment,
         startedAt: Long,
+        force: Boolean = false,
     ): CphCaseResult? {
         synchronized(cppFileBuildLock) {
-            return buildCppFileTargetLocked(settings, environment, startedAt)
+            return buildCppFileTargetLocked(settings, environment, startedAt, force)
         }
     }
 
@@ -568,10 +541,11 @@ class CphRunner(private val project: Project) {
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
         environment: ExecutionEnvironment,
         startedAt: Long,
+        force: Boolean,
     ): CphCaseResult? {
         return try {
             val buildKey = cppFileBuildKey(settings)
-            if (isCppFileBuildFresh(settings, environment, buildKey)) return null
+            if (!force && isCppFileBuildFresh(settings, environment, buildKey)) return null
             val ok = executeCppFileBuildTask(settings, environment)
             if (ok) {
                 markCppFileBuildFresh(settings, environment, buildKey)
@@ -655,6 +629,52 @@ class CphRunner(private val project: Project) {
         cppFileBuildCache.remember(settings.name, buildKey, executable)
     }
 
+    private fun resolveCppFileCommandLineRecovering(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        executor: Executor,
+        environment: ExecutionEnvironment,
+        startedAt: Long,
+    ): CppFileCommandLineResolution {
+        return try {
+            CppFileCommandLineResolution.Ready(resolveCppFileCommandLine(settings, executor, environment))
+        } catch (e: CppFileExecutableNotReadyException) {
+            log.warn(
+                "CPH C/C++ File executable is missing after build for '${settings.name}', retrying once: " +
+                    e.executable.absolutePath,
+            )
+            cleanupCppFileExecutableArtifacts(e.executable)
+            val refresh = CphCompileSettingsSynchronizer(project).refreshCppFileWorkspace(settings, waitForTarget = true)
+            if (refresh.error != null) {
+                log.warn("CPH C/C++ File target refresh failed before retry for '${settings.name}': ${refresh.error}")
+            }
+            val rebuildResult = buildCppFileTarget(settings, environment, startedAt, force = true)
+            if (rebuildResult != null) return CppFileCommandLineResolution.Failed(rebuildResult)
+
+            CppFileCommandLineResolution.Ready(resolveCppFileCommandLine(settings, executor, environment))
+        }
+    }
+
+    private fun cleanupCppFileExecutableArtifacts(executable: File) {
+        val candidates = linkedSetOf(executable)
+        val parent = executable.parentFile
+        val name = executable.name
+        val baseName = name.removeSuffix(".exe")
+        if (parent != null && baseName != name) {
+            listOf(".ilk", ".pdb", ".obj", ".o").forEach { suffix ->
+                candidates.add(File(parent, baseName + suffix))
+            }
+        }
+        candidates.forEach { file ->
+            runCatching {
+                if (file.exists() && !file.delete()) {
+                    log.warn("CPH could not delete stale C/C++ File artifact: ${file.absolutePath}")
+                }
+            }.onFailure {
+                log.warn("CPH failed to delete stale C/C++ File artifact: ${file.absolutePath}", it)
+            }
+        }
+    }
+
     private fun cppFileBuildKey(settings: com.intellij.execution.RunnerAndConfigurationSettings): CphCppFileBuildKey {
         val configuration = settings.configuration as? CppFileRunConfiguration
             ?: return CphCppFileBuildKey(settings.name, "", "", "", "", "", 0L, 0L)
@@ -689,7 +709,7 @@ class CphRunner(private val project: Project) {
             ?: throw ExecutionException("Cannot resolve CLion C/C++ File executable for '${settings.name}'.")
         val runFile = runFileFromPair(settings, runFileAndEnvironment)
         if (!runFile.isFile) {
-            throw ExecutionException("Executable is not ready: ${runFile.absolutePath}")
+            throw CppFileExecutableNotReadyException(runFile)
         }
         val cppEnvironment = pairComponent(runFileAndEnvironment, "component2")
             ?: throw ExecutionException("CLion C/C++ File launcher did not return a toolchain environment for '${settings.name}'.")
@@ -796,24 +816,19 @@ class CphRunner(private val project: Project) {
     }
 
     private fun runCommand(command: List<String>, workingDir: File, timeoutSeconds: Long): CommandResult? {
-        val process = ProcessBuilder(command)
-            .directory(workingDir)
-            .start()
-        val stdoutFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-            process.inputStream.bufferedReader().readText()
-        }
-        val stderrFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-            process.errorStream.bufferedReader().readText()
-        }
-        val finished = process.waitFor(timeoutSeconds.coerceAtLeast(1), TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            return null
-        }
+        val result = processRunner.execute(
+            startProcess = {
+                ProcessBuilder(command)
+                    .directory(workingDir)
+                    .start()
+            },
+            timeoutMillis = TimeUnit.SECONDS.toMillis(timeoutSeconds.coerceAtLeast(1)),
+        )
+        if (result.timedOut) return null
         return CommandResult(
-            exitCode = process.exitValue(),
-            stdout = stdoutFuture.get(1, TimeUnit.SECONDS),
-            stderr = stderrFuture.get(1, TimeUnit.SECONDS),
+            exitCode = result.exitCode ?: -1,
+            stdout = result.stdout,
+            stderr = result.stderr,
         )
     }
 

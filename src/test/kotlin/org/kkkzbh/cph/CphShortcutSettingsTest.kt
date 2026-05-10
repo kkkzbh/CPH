@@ -69,7 +69,25 @@ class CphShortcutSettingsTest {
         )
 
         assertTrue(message?.contains("全局运行快捷键") == true)
-        assertTrue(message?.contains("单CASE调试快捷键") == true)
+        assertTrue(message?.contains(CphText.forLanguage(CphUiLanguage.ZH_CN).debugSelectedShortcut) == true)
+    }
+
+    @Test
+    fun duplicateShortcutValidationRendersEnglishNames() {
+        val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK)
+        val stored = CphShortcutMatcher.toStorageString(keyStroke)
+
+        val message = CphShortcutMatcher.duplicateShortcutMessage(
+            CphShortcutSettingsState(
+                runAllShortcut = stored,
+                debugSelectedCaseShortcut = stored,
+            ),
+            language = CphUiLanguage.ENGLISH,
+        )
+
+        assertTrue(message?.contains("Run all shortcut") == true)
+        assertTrue(message?.contains("Debug case shortcut") == true)
+        assertTrue(message?.contains("use the same shortcut") == true)
     }
 
     @Test

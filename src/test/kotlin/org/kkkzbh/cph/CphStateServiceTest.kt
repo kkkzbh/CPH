@@ -148,6 +148,36 @@ class CphStateServiceTest {
     }
 
     @Test
+    fun loadStateDefaultsCphDisabledForNewProject() {
+        val service = CphStateService()
+        service.loadState(CphState())
+
+        assertFalse(service.getState().cphEnabled)
+    }
+
+    @Test
+    fun loadStatePreservesCphEnabled() {
+        val service = CphStateService()
+        service.loadState(CphState(cphEnabled = true))
+
+        assertTrue(service.getState().cphEnabled)
+    }
+
+    @Test
+    fun loadStateTreatsExistingTargetDataAsEnabled() {
+        val service = CphStateService()
+        service.loadState(
+            CphState(
+                targets = linkedMapOf(
+                    "target" to CphTargetCases(targetId = "target", displayName = "Target"),
+                ),
+            ),
+        )
+
+        assertTrue(service.getState().cphEnabled)
+    }
+
+    @Test
     fun loadStateDefaultsSingleFileWorkingDirectory() {
         val service = CphStateService()
         service.loadState(CphState())

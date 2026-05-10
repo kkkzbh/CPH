@@ -10,6 +10,7 @@ import com.intellij.openapi.wm.IdeFocusManager
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import org.kkkzbh.cph.CphCodeforcesSubmitFeature
+import org.kkkzbh.cph.CphStateService
 import org.kkkzbh.cph.submit.CphActiveTabService
 import org.kkkzbh.cph.submit.CphSubmitBridgeUpdate
 import org.kkkzbh.cph.submit.CphSubmitOrchestrator
@@ -131,6 +132,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respond(exchange, 503, "No open project to receive payload")
             return
         }
+        if (!CphStateService.getInstance(project).state.cphEnabled) {
+            respond(exchange, 403, "CPH is not enabled for this project")
+            return
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             runCatching { CphProblemImporter.getInstance(project).import(payload) }
                 .onFailure { logger.warn("CPH import failed", it) }
@@ -166,6 +171,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respond(exchange, 503, "No open project")
             return
         }
+        if (!CphStateService.getInstance(project).state.cphEnabled) {
+            respond(exchange, 403, "CPH is not enabled for this project")
+            return
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             runCatching { CphSubmitOrchestrator.getInstance(project).submit() }
                 .onFailure { logger.warn("CPH submit-now failed", it) }
@@ -188,6 +197,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
         CphActiveTabService.getInstance().update(parsed.url, parsed.title)
         val project = resolveProject()
         if (project == null) {
+            respondNoContent(exchange)
+            return
+        }
+        if (!CphStateService.getInstance(project).state.cphEnabled) {
             respondNoContent(exchange)
             return
         }
@@ -220,6 +233,10 @@ internal class CphCompetitiveCompanionServer : Disposable {
         val project = resolveProject()
         if (project == null) {
             respond(exchange, 503, "No open project")
+            return
+        }
+        if (!CphStateService.getInstance(project).state.cphEnabled) {
+            respond(exchange, 403, "CPH is not enabled for this project")
             return
         }
         val accepted = CphSubmitOrchestrator.getInstance(project).applyBridgeUpdate(update)

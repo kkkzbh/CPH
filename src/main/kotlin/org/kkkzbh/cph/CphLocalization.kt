@@ -1,0 +1,340 @@
+package org.kkkzbh.cph
+
+internal enum class CphUiLanguage(val id: String, val displayName: String) {
+    ZH_CN("zh_cn", "简体中文"),
+    ENGLISH("en", "English");
+
+    override fun toString(): String = displayName
+
+    companion object {
+        fun normalize(languageId: String?): CphUiLanguage {
+            return when (languageId) {
+                ENGLISH.id -> ENGLISH
+                ZH_CN.id -> ZH_CN
+                else -> ZH_CN
+            }
+        }
+
+        fun current(): CphUiLanguage =
+            runCatching { normalize(CphPluginSettings.getInstance().state.uiLanguage) }.getOrDefault(ZH_CN)
+    }
+}
+
+internal object CphText {
+    private val zh = CphUiTexts(CphUiLanguage.ZH_CN)
+    private val en = CphUiTexts(CphUiLanguage.ENGLISH)
+
+    fun current(): CphUiTexts = forLanguage(CphUiLanguage.current())
+
+    fun forLanguage(language: CphUiLanguage): CphUiTexts {
+        return when (language) {
+            CphUiLanguage.ZH_CN -> zh
+            CphUiLanguage.ENGLISH -> en
+        }
+    }
+}
+
+internal class CphUiTexts(private val language: CphUiLanguage) {
+    private val zh: Boolean
+        get() = language == CphUiLanguage.ZH_CN
+
+    val settingsTab = if (zh) "设置" else "Settings"
+    val utilityTab = if (zh) "实用" else "Utilities"
+    val themesTab = if (zh) "主题" else "Themes"
+    val help = if (zh) "帮助" else "Help"
+    val interfaceLanguage = if (zh) "界面语言:" else "Interface language:"
+    val runSettings = if (zh) "运行设置" else "Run Settings"
+    val outputSettings = if (zh) "输出设置" else "Output Settings"
+    val submitSettings = if (zh) "提交设置" else "Submit Settings"
+    val shortcuts = if (zh) "快捷键" else "Shortcuts"
+    val singleFileMode = if (zh) "纯单文件模式" else "Pure single-file mode"
+    val ignoreTrailingWhitespace = if (zh) "忽略行尾空格和多余换行" else "Ignore trailing whitespace and extra newlines"
+    val outputSplit = if (zh) "双栏显示标准输出 / 期望输出" else "Show Standard / Expected side by side"
+    val noExpectedMode = if (zh) "无期望输出模式" else "No expected output mode"
+    val confidentSubmit = if (zh) "自信模式：本地全 AC 后自动提交 CF" else "Confident mode: auto-submit to CF after local AC"
+    val workingDirectory = if (zh) "工作目录配置:" else "Working directory:"
+    val timeLimits = if (zh) "时间限制:" else "Time limit:"
+    val cppStandard = if (zh) "C++ 标准:" else "C++ standard:"
+    val compileOptions = if (zh) "编译选项:" else "Compile options:"
+    val fontSize = if (zh) "字体大小:" else "Font size:"
+    val input = if (zh) "输入" else "Input"
+    val expectedOutput = if (zh) "期望输出" else "Expected output"
+    val standardOutput = if (zh) "标准输出" else "Standard output"
+    val runAllShortcut = if (zh) "全局运行快捷键" else "Run all shortcut"
+    val runSelectedShortcut = if (zh) "单CASE运行快捷键" else "Run case shortcut"
+    val debugSelectedShortcut = if (zh) "单CASE调试快捷键" else "Debug case shortcut"
+    val submitShortcut = if (zh) "提交 CF 快捷键" else "Submit CF shortcut"
+    val unsetShortcut = if (zh) "未设置" else "Not set"
+    val shortcutTooltip = if (zh) {
+        "按下快捷键组合；Esc、Backspace 或 Delete 清空。"
+    } else {
+        "Press a shortcut; Esc, Backspace, or Delete clears it."
+    }
+    val settingsReturnHint = if (zh) "提示：再次点击设置按钮可回到主界面" else "Tip: click Settings again to return"
+    val codeforcesSubmitTitle = if (zh) "Codeforces 远程提交" else "Codeforces Remote Submit"
+    val codeforcesSubmitSummary = if (zh) {
+        "使用浏览器当前 Codeforces 题面和登录态提交当前 C++ 文件。"
+    } else {
+        "Submit the current C++ file with the active Codeforces problem tab and browser login session."
+    }
+    val classicThemeSummary = if (zh) {
+        "沿用当前 CPH 深色界面与状态配色。"
+    } else {
+        "Use the classic CPH dark interface and status colors."
+    }
+    val aveMujicaThemeSummary = if (zh) {
+        "Ave Mujica 暗色面板、金色操作高亮与角色功能图标。"
+    } else {
+        "Ave Mujica dark panel, gold action highlights, and character function icons."
+    }
+    val defaultThemeName = if (zh) "默认主题" else "Default"
+    val enabled = if (zh) "已启用" else "Enabled"
+    val enable = if (zh) "启用" else "Enable"
+    val disable = if (zh) "禁用" else "Disable"
+    val startCph = if (zh) "启动 CPH" else "Start CPH"
+    val run = if (zh) "运行" else "Run"
+    val debug = if (zh) "调试" else "Debug"
+    val chooseWorkingDirectory = if (zh) "选择工作目录" else "Choose Working Directory"
+    val dragToResize = if (zh) "拖拽调整大小" else "Drag to resize"
+    val addCase = if (zh) "新增样例" else "Add case"
+    val deleteCase = if (zh) "删除样例" else "Delete case"
+    val cphDocs = if (zh) "打开 CPH 文档" else "Open CPH documentation"
+    val settings = if (zh) "设置" else "Settings"
+    val hideSettings = if (zh) "隐藏设置" else "Hide settings"
+    val runAllEnabledCases = if (zh) "运行全部启用样例" else "Run all enabled cases"
+    val resetCases = if (zh) "删除全部样例并创建 Case 1" else "Delete all cases and create Case 1"
+    val runThisCase = if (zh) "运行当前样例" else "Run this case"
+    val debugThisCase = if (zh) "用当前运行目标调试此样例" else "Debug this case with the selected run target"
+    val singleFileTooltip = if (zh) {
+        "自动为当前 .cpp 文件选择或创建 C/C++ File 运行目标"
+    } else {
+        "Automatically select or create the C/C++ File run target for the focused .cpp file"
+    }
+    val workingDirectoryTooltip = if (zh) "CPH 管理的 C/C++ File 运行目标工作目录" else "Working directory for CPH-managed C/C++ File run targets"
+    val chooseWorkingDirectoryTooltip = if (zh) "选择工作目录" else "Choose working directory"
+    val defaultThemeEnabled = if (zh) "默认主题已启用" else "Default theme is enabled"
+    val enableDefaultTheme = if (zh) "启用默认主题" else "Enable default theme"
+    val aveMujicaThemeEnabled = if (zh) "Ave Mujica 主题已启用" else "Ave Mujica theme is enabled"
+    val enableAveMujicaTheme = if (zh) "启用 Ave Mujica 主题" else "Enable Ave Mujica theme"
+    val submitDisabledSingleFile = if (zh) "提交 Codeforces 前需启用纯单文件模式" else "Enable pure single-file mode before submitting to Codeforces"
+    val activeTabNotCodeforces = if (zh) "活动标签页不是 Codeforces 题面" else "Active tab is not a Codeforces problem page"
+    val noActiveCodeforcesTab = if (zh) {
+        "没有活动的 Codeforces 标签页，请安装 CPH Target Runner 浏览器扩展"
+    } else {
+        "No active Codeforces tab - install the CPH Target Runner browser extension"
+    }
+    val codeforcesDisableTooltip = if (zh) "禁用 Codeforces 远程提交" else "Disable Codeforces remote submit"
+    val codeforcesEnableTooltip = if (zh) "启用 Codeforces 远程提交" else "Enable Codeforces remote submit"
+    val cppFollowTarget = if (zh) "跟随 Target" else "Follow target"
+
+    fun submitCurrentFile(displayId: String): String {
+        return if (zh) "提交当前文件 -> $displayId" else "Submit current file -> $displayId"
+    }
+
+    fun duplicateShortcutMessage(actionNames: List<String>, shortcut: String): String {
+        return if (zh) {
+            "${actionNames.joinToString("、")} 使用了相同快捷键：$shortcut"
+        } else {
+            "${actionNames.joinToString(", ")} use the same shortcut: $shortcut"
+        }
+    }
+
+    fun shortcutActionName(action: CphShortcutAction): String {
+        return when (action) {
+            CphShortcutAction.RUN_ALL -> runAllShortcut
+            CphShortcutAction.RUN_SELECTED_CASE -> runSelectedShortcut
+            CphShortcutAction.DEBUG_SELECTED_CASE -> debugSelectedShortcut
+            CphShortcutAction.SUBMIT -> submitShortcut
+        }
+    }
+
+    fun themeName(themeId: String): String {
+        return when (themeId) {
+            CphThemeId.CLASSIC -> defaultThemeName
+            CphThemeId.AVE_MUJICA -> "Ave Mujica"
+            else -> defaultThemeName
+        }
+    }
+
+    fun caseRunning(name: String): String = if (zh) "$name：运行中" else "$name: running"
+    fun caseQueued(name: String): String = if (zh) "$name：等待中" else "$name: queued"
+    fun caseNotRun(name: String): String = if (zh) "$name：未运行" else "$name: not run"
+    fun caseOk(name: String, duration: String): String = if (zh) "$name：OK，用时 $duration" else "$name: OK in $duration"
+    fun caseVerdict(name: String, verdict: CphVerdict, duration: String): String =
+        if (zh) "$name：$verdict，用时 $duration" else "$name: $verdict in $duration"
+
+    fun autoSubmitAllAc(): String {
+        return if (zh) "CPH 自信模式：本地全部 AC，自动提交 Codeforces" else "CPH confident mode: all local cases AC, submitting to Codeforces"
+    }
+
+    fun debugPreparingStatus(caseName: String): String =
+        if (zh) "CPH 调试：准备 $caseName" else "CPH Debug: preparing $caseName"
+
+    fun debugLaunchingStatus(caseName: String): String =
+        if (zh) "CPH 调试：启动 $caseName" else "CPH Debug: launching $caseName"
+
+    fun preparingDebugTask(): String =
+        if (zh) "准备 CPH 调试" else "Preparing CPH debug"
+
+    fun preparingCase(caseName: String): String =
+        if (zh) "准备 $caseName" else "Preparing $caseName"
+
+    fun runningSamplesTask(): String =
+        if (zh) "运行 CPH 样例" else "Running CPH samples"
+
+    fun preparingRunTarget(): String =
+        if (zh) "准备 CPH 运行目标" else "Preparing CPH run target"
+
+    fun runningSamples(count: Int): String =
+        if (zh) "正在运行 $count 个 CPH 样例" else "Running $count CPH samples"
+
+    fun completedSamples(done: Int, total: Int): String =
+        if (zh) "已完成 $done/$total 个 CPH 样例" else "Completed $done/$total CPH samples"
+
+    fun sampleFailedTitle(): String =
+        if (zh) "CPH 样例失败" else "CPH sample failed"
+
+    fun debugFailedTitle(): String =
+        if (zh) "CPH 调试失败" else "CPH debug failed"
+
+    fun debugStatus(message: String): String =
+        if (zh) "CPH 调试：$message" else "CPH Debug: $message"
+
+    val cphErrorTitle = if (zh) "CPH 错误" else "CPH error"
+    val errorDetailsTitle = if (zh) "CPH 错误详情" else "CPH Error Details"
+    val viewDetailedLog = if (zh) "查看详细日志" else "View detailed log"
+    val reportError = if (zh) "报告错误" else "Report error"
+    val copyLog = if (zh) "复制日志" else "Copy log"
+    val copy = if (zh) "复制" else "Copy"
+    val setExpectedShort = if (zh) "设置" else "Set"
+    val doneShort = if (zh) "完成" else "Done"
+    val setActualAsExpectedTooltip = if (zh) "将标准输出设置到期望输出" else "Set Standard output as Expected output"
+    val actualSetAsExpected = if (zh) "已将标准输出设置到期望输出" else "Standard output set as Expected output"
+
+    fun copySection(section: String): String {
+        return if (zh) "复制$section" else "Copy $section"
+    }
+
+    fun copiedSection(section: String): String {
+        return if (zh) "已复制${section}到剪贴板" else "$section copied to clipboard"
+    }
+
+    fun shortcutSettingsDuplicate(message: String): String {
+        return if (zh) "CPH 快捷键设置：$message" else "CPH shortcut settings: $message"
+    }
+
+    fun submitAlreadyInFlight(): String =
+        if (zh) "已有提交正在进行。" else "A submission is already in flight."
+
+    fun submitRequiresSingleFile(): String =
+        if (zh) "Codeforces 提交需要启用纯单文件模式。请先在 CPH 设置中启用。" else "Codeforces submit requires pure single-file mode. Enable pure single-file mode in CPH settings first."
+
+    fun submitNoActiveTab(): String =
+        if (zh) "没有活动的 Codeforces 标签页。请安装或打开 CPH Target Runner 浏览器扩展，并聚焦 CF 题面。" else "No active Codeforces tab. Install/open the CPH Target Runner browser extension and focus a CF problem page."
+
+    fun submitActiveTabInvalid(url: String): String =
+        if (zh) "活动标签页不是 Codeforces 题面：$url" else "Active tab is not a Codeforces problem page: $url"
+
+    fun submitNoEditor(): String =
+        if (zh) "当前没有打开编辑器。切换到 .cpp/.cc 文件后再提交。" else "No editor is open. Switch to a .cpp/.cc file and click Submit again."
+
+    fun submitUnsupportedSource(extension: String): String =
+        if (zh) "CPH 提交仅支持 C++ 文件（.cpp/.cc/.cxx/.cp），当前为 .$extension。" else "Only C++ files (.cpp/.cc/.cxx/.cp) are supported by CPH submit (got .$extension)."
+
+    fun submitWaitingForBrowser(displayId: String): String =
+        if (zh) "-> $displayId  等待 CPH Target Runner 浏览器扩展..." else "-> $displayId  Waiting for CPH Target Runner browser extension..."
+
+    fun submitBrowserReceived(displayId: String): String =
+        if (zh) "-> $displayId  浏览器已接收源码..." else "-> $displayId  Browser received source..."
+
+    fun submitFailed(message: String): String =
+        if (zh) "失败：$message" else "Failed: $message"
+
+    fun submitPickupTimeout(): String =
+        if (zh) "CPH Target Runner 浏览器扩展未接收提交请求。请聚焦 CF 题面并检查扩展。" else "CPH Target Runner browser extension did not pick up the submit request. Focus the CF problem tab and check the extension."
+
+    fun submitVerdictTimeout(): String =
+        if (zh) "提交在返回最终 Codeforces 评测结果前超时。" else "Submission timed out before a final Codeforces verdict."
+
+    fun importSettings(): CphImportSettingsTexts = CphImportSettingsTexts(language)
+}
+
+internal class CphImportSettingsTexts(private val language: CphUiLanguage) {
+    private val zh: Boolean
+        get() = language == CphUiLanguage.ZH_CN
+
+    val enableServer = if (zh) "启用 Competitive Companion 接收服务" else "Enable Competitive Companion receiver"
+    val overwriteExisting = if (zh) "重新导入同一题目时覆盖已存在的源文件" else "Overwrite existing source files when re-importing the same problem"
+    val port = if (zh) "监听端口：" else "Port:"
+    val sourceRoot = if (zh) "源代码根目录（相对项目）：" else "Source root (relative to project):"
+    val pathTemplate = if (zh) "路径模板：" else "Path template:"
+    val variables = if (zh) "可用变量：\${contest} \${index} \${name} \${slug} \${source}" else "Variables: \${contest} \${index} \${name} \${slug} \${source}"
+    val cppTemplate = if (zh) "C++ 代码模板：" else "C++ code template:"
+    val codeforcesSubmit = if (zh) "Codeforces 一键提交" else "Codeforces One-click Submit"
+    val tutorialTitle = if (zh) "使用说明" else "Instructions"
+    val defaultPorts = if (zh) {
+        "Competitive Companion 默认端口列表已包含 10043，通常无需在浏览器侧改动。"
+    } else {
+        "Competitive Companion includes 10043 in its default port list, so browser-side changes are usually unnecessary."
+    }
+    val submitLanguageNote = if (zh) {
+        "提交语言自动跟随 CPH 工具窗的 C++ 标准；超过 Codeforces 当前支持上限时使用 GNU G++23。"
+    } else {
+        "The submit language follows the CPH tool-window C++ standard; values above the Codeforces ceiling use GNU G++23."
+    }
+    val submitClickNote = if (zh) {
+        "点击 CPH 工具栏提交按钮即提交（无确认框）：当前编辑器文件 -> 浏览器活动 CF Tab。需先在浏览器登录 CF 并安装 CPH Target Runner 浏览器扩展。"
+    } else {
+        "Click the CPH toolbar submit button to submit without confirmation: current editor file -> active browser CF tab. Log in to CF and install the CPH Target Runner browser extension first."
+    }
+
+    fun statusRunning(port: Int): String =
+        if (zh) "当前状态：运行中（监听 127.0.0.1:$port）" else "Status: running (listening on 127.0.0.1:$port)"
+
+    fun statusDisabled(): String =
+        if (zh) "当前状态：已禁用（勾选上方启用项以开启）" else "Status: disabled (enable the checkbox above to start)"
+
+    fun statusStopped(): String =
+        if (zh) "当前状态：未启动" else "Status: stopped"
+
+    fun statusError(port: Int, message: String): String =
+        if (zh) "当前状态：启动失败（端口 $port）：$message" else "Status: failed to start (port $port): $message"
+
+    fun tutorial(): String {
+        return if (zh) {
+            """
+                1. 在 Chrome 应用商店搜索并安装 “Competitive Companion” 扩展。
+                2. 在 CLion 项目里勾选上方“启用 Competitive Companion 接收服务”，保存设置。
+                3. 打开任意 Codeforces 题面（例如 https://codeforces.com/contest/1/problem/A）。
+                4. 点击浏览器工具栏上 Competitive Companion 的绿色加号按钮。
+                5. 插件会自动：
+                   - 在 ${"$"}{源代码根目录}/${"$"}{contest}/${"$"}{index}.cpp 创建源文件并打开；
+                   - 注册一个单文件 (C/C++ File) 运行配置并设为当前运行目标；
+                   - 将题目样例写入 CPH 工具窗口中对应的 Cases。
+                6. 在 CPH 工具窗口点击运行全部即可一键评测。
+
+                常见问题：
+                - 浏览器点了没反应？检查上方“当前状态”是否为“运行中”，并确认 Competitive Companion 选项页 -> Custom ports 中包含此处显示的端口（默认列表已含 10043）。
+                - 端口被占用？换一个上方端口（例如 10044/10046/10047 等 CC 默认列表中的其它端口）。
+                - 多个 CLion 同时打开？请求会发送到最近聚焦的窗口。
+            """.trimIndent()
+        } else {
+            """
+                1. Install the "Competitive Companion" extension from the Chrome Web Store.
+                2. In the CLion project, enable the receiver checkbox above and apply settings.
+                3. Open any Codeforces problem page, for example https://codeforces.com/contest/1/problem/A.
+                4. Click the green plus button in the Competitive Companion browser toolbar.
+                5. The plugin will:
+                   - create and open a source file at ${"$"}{source root}/${"$"}{contest}/${"$"}{index}.cpp;
+                   - register a single-file (C/C++ File) run configuration and select it as the current target;
+                   - write the problem samples into the matching CPH tool-window cases.
+                6. Click Run All in the CPH tool window to test everything.
+
+                Troubleshooting:
+                - Browser click did nothing? Check that the status above is running and that the Competitive Companion options page -> Custom ports includes this port. The default list already includes 10043.
+                - Port in use? Choose another port above, such as 10044, 10046, or 10047 from the CC default list.
+                - Multiple CLion windows open? Requests go to the most recently focused window.
+            """.trimIndent()
+        }
+    }
+}

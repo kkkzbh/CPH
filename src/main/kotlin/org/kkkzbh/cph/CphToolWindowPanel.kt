@@ -21,6 +21,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.ide.BrowserUtil
+import com.intellij.util.IconUtil
 import com.intellij.ui.scale.JBUIScale
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -56,12 +57,11 @@ import java.awt.LinearGradientPaint
 import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.Shape
+import java.awt.Toolkit
 import java.awt.TexturePaint
+import java.awt.datatransfer.StringSelection
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.util.concurrent.ExecutorCompletionService
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.swing.BorderFactory
 import javax.swing.Box
@@ -208,7 +208,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val theme: CphThemePalette
         get() = CphThemes.current()
     private var currentIdentity = CphTargetResolver.current(project)
-    private var currentTargetCases = stateService.getOrCreateTargetCases(currentIdentity)
+    private var currentTargetCases = initialTargetCases(currentIdentity)
     private var selectedCase: CphTestCase? = null
     private var running = false
     private var settingsVisible = false
@@ -216,6 +216,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var pendingTargetRefresh = false
     private var applyingTargetSettings = false
     private var applyingShortcutSettings = false
+    private var applyingLanguageSettings = false
     private var applyingWorkingDirectorySettings = false
     private var tabScrollPaneHeightListenerInstalled = false
     private var activeRunButton: ActiveRunButton? = null
@@ -229,9 +230,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val runAllButton = JButton(RUN_ALL_BUTTON_TEXT)
     private val submitButton = JButton("📤")
     private val helpButton = JButton("?")
-    private val settingsTabButton = JButton("设置")
-    private val utilitySettingsTabButton = JButton("实用", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
-    private val themeSettingsTabButton = JButton("主题", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
+    private val enableCphButton = OnboardingStartButton()
+    private val settingsTabButton = JButton()
+    private val utilitySettingsTabButton = JButton("", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
+    private val themeSettingsTabButton = JButton("", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
     private val codeforcesPluginToggleButton = JButton()
     private val classicThemeToggleButton = JButton()
     private val aveMujicaThemeToggleButton = JButton()
@@ -239,6 +241,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val generatedIconPresenceCache = mutableMapOf<String, Boolean>()
     private val aveMujicaStatusGlyphCache = mutableMapOf<String, BufferedImage?>()
     private val iconAnimationTimers = mutableMapOf<JButton, Timer>()
+    private val titleActionFeedbackTimers = mutableMapOf<JButton, Timer>()
     private var aveMujicaLineHighlightTile: BufferedImage? = null
     private var aveMujicaLineHighlightAnimationStartedNanos = 0L
     private var aveMujicaStatusGlyphAnimationStartedNanos = 0L
@@ -259,17 +262,22 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         it.isRepeats = false
     }
     private val resetCasesButton = JButton("↺")
-    private val runSelectedCaseButton = JButton(RUN_SELECTED_BUTTON_TEXT)
-    private val debugSelectedCaseButton = JButton("Debug")
+    private val runSelectedCaseButton = JButton()
+    private val debugSelectedCaseButton = JButton()
+    private val inputCopyButton = JButton()
+    private val expectedCopyButton = JButton()
+    private val actualCopyButton = JButton()
+    private val actualToExpectedButton = JButton()
     private val runSpinnerTimer = Timer(140) {
         updateRunSpinnerText()
         refreshRunActionButtons()
     }
-    private val singleFileModeEnabled = JCheckBox("纯单文件模式")
-    private val ignoreTrailingWhitespace = JCheckBox("忽略行尾空格和多余换行")
-    private val outputSplitEnabled = JCheckBox("双栏显示 Actual / Expected")
-    private val noExpectedModeEnabled = JCheckBox("无 Expected 模式")
-    private val confidentSubmitEnabled = JCheckBox("自信模式：本地全 AC 后自动提交 CF")
+    private val singleFileModeEnabled = JCheckBox()
+    private val ignoreTrailingWhitespace = JCheckBox()
+    private val outputSplitEnabled = JCheckBox()
+    private val noExpectedModeEnabled = JCheckBox()
+    private val confidentSubmitEnabled = JCheckBox()
+    private val languageCombo = JComboBox(CphUiLanguage.entries.toTypedArray())
     private val cppStandardCombo = JComboBox(CphCppStandard.entries.toTypedArray())
     private val compileOptionsField = JBTextField()
     private val singleFileWorkingDirectoryField = JBTextField()
@@ -307,6 +315,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val settingsContentCards = JPanel(CardLayout())
     private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
     private val settingsReturnHintPanel = JPanel(BorderLayout())
+    private var topView: JComponent? = null
     private val outputContainer = JPanel(BorderLayout())
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
@@ -328,18 +337,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     init {
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
         background = theme.panel
-        add(buildTop(), BorderLayout.NORTH)
+        refreshLocalizedTexts(rebuildSettings = false)
+        val builtTop = buildTop()
+        topView = builtTop
+        add(builtTop, BorderLayout.NORTH)
         add(buildCenter(), BorderLayout.CENTER)
 
-        runAllButton.toolTipText = "Run all enabled cases"
-        resetCasesButton.toolTipText = "Delete all cases and create Case 1"
-        runSelectedCaseButton.toolTipText = "Run this case"
-        debugSelectedCaseButton.toolTipText = "Debug this case with the selected run target"
-        settingsButton.toolTipText = "Settings"
-        helpButton.toolTipText = "Open CPH documentation"
-        singleFileModeEnabled.toolTipText = "Automatically select or create the C/C++ File run target for the focused .cpp file"
-        singleFileWorkingDirectoryField.toolTipText = "Working directory for CPH-managed C/C++ File run targets"
-        singleFileWorkingDirectoryChooserButton.toolTipText = "Choose working directory"
+        configureEnableCphButton()
         configureRunAllButton()
         configureResetCasesButton()
         configureRunSelectedCaseButton()
@@ -347,28 +351,40 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureSettingsButton()
         configureSubmitButton()
         configureHelpButton()
+        configureTitleActionButton(inputCopyButton, TITLE_COPY_BUTTON_WIDTH)
+        configureTitleActionButton(expectedCopyButton, TITLE_COPY_BUTTON_WIDTH)
+        configureTitleActionButton(actualCopyButton, TITLE_COPY_BUTTON_WIDTH)
+        configureTitleActionButton(actualToExpectedButton, TITLE_SET_EXPECTED_BUTTON_WIDTH)
         configureVerdictLabel()
         configureWorkingDirectoryChooserButton()
 
         settingsButton.addActionListener { toggleSettingsPanel() }
+        enableCphButton.addActionListener { enableCphForProject() }
         runAllButton.addActionListener { runAllCases() }
         submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
         helpButton.addActionListener { BrowserUtil.browse(CPH_DOCS_URL) }
         settingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.SETTINGS) }
         utilitySettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.UTILITY) }
         themeSettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.THEMES) }
+        languageCombo.addActionListener { selectUiLanguage() }
         codeforcesPluginToggleButton.addActionListener { toggleCodeforcesSubmitPlugin() }
         classicThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.CLASSIC) }
         aveMujicaThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.AVE_MUJICA) }
         resetCasesButton.addActionListener { resetCases() }
         runSelectedCaseButton.addActionListener { runSelectedCase() }
         debugSelectedCaseButton.addActionListener { debugSelectedCase() }
+        inputCopyButton.addActionListener { copyEditorText(inputArea, inputCopyButton, CphText.current().input) }
+        expectedCopyButton.addActionListener {
+            copyEditorText(expectedArea, expectedCopyButton, CphText.current().expectedOutput)
+        }
+        actualCopyButton.addActionListener { copyEditorText(actualArea, actualCopyButton, CphText.current().standardOutput) }
+        actualToExpectedButton.addActionListener { setActualOutputAsExpected() }
         singleFileModeEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().singleFileModeEnabled = singleFileModeEnabled.isSelected
+                val enabled = singleFileModeEnabled.isSelected
+                stateService.getState().singleFileModeEnabled = enabled
+                refreshSubmitAvailability(singleFileModeEnabled = enabled)
                 CphSingleFileModeService.getInstance(project).syncForCurrentFile(force = true)
-                refreshSubmitButtonTooltip()
-                setSubmitBusy(submitBusy)
                 refreshRunActionButtons()
             }
         }
@@ -442,8 +458,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         listOf(expectedArea, actualArea).forEach(::installDiffRefreshListener)
 
         installTargetRefreshListeners()
+        installPluginSettingsListeners()
         installSubmissionListeners()
-        refreshTarget()
+        if (isCphEnabled()) {
+            refreshTarget()
+        } else {
+            showActiveView()
+        }
         refreshShortcutSettings()
         setSubmitBusy(false)
         refreshCodeforcesPluginUi()
@@ -459,9 +480,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         stopAveMujicaStatusGlyphAnimation()
         iconAnimationTimers.values.forEach { it.stop() }
         iconAnimationTimers.clear()
+        titleActionFeedbackTimers.values.forEach { it.stop() }
+        titleActionFeedbackTimers.clear()
     }
 
     internal fun triggerShortcut(action: CphShortcutAction) {
+        if (!isCphEnabled()) return
         when (action) {
             CphShortcutAction.RUN_ALL -> triggerShortcutAction(runAllButton) { runAllCases() }
             CphShortcutAction.RUN_SELECTED_CASE -> triggerShortcutAction(runSelectedCaseButton) { runSelectedCase() }
@@ -479,6 +503,88 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun triggerShortcutAction(button: JButton, action: () -> Unit) {
         playThemedIconAnimation(button)
         action()
+    }
+
+    private fun initialTargetCases(identity: CphTargetIdentity): CphTargetCases {
+        return if (isCphEnabled()) {
+            stateService.getOrCreateTargetCases(identity)
+        } else {
+            CphTargetCases(targetId = identity.id, displayName = identity.displayName)
+        }
+    }
+
+    private fun isCphEnabled(): Boolean = stateService.getState().cphEnabled
+
+    private fun enableCphForProject() {
+        if (!isCphEnabled()) {
+            stateService.getState().cphEnabled = true
+        }
+        CphSingleFileModeService.getInstance(project).start()
+        refreshTarget()
+        showActiveView()
+    }
+
+    private fun installPluginSettingsListeners() {
+        val connection = ApplicationManager.getApplication().messageBus.connect(this)
+        connection.subscribe(CphPluginSettingsChangedListener.TOPIC, object : CphPluginSettingsChangedListener {
+            override fun uiLanguageChanged() {
+                SwingUtilities.invokeLater { rebuildLocalizedLayout() }
+            }
+        })
+    }
+
+    private fun selectUiLanguage() {
+        if (applyingLanguageSettings) return
+        val language = languageCombo.selectedItem as? CphUiLanguage ?: CphUiLanguage.ZH_CN
+        CphPluginSettings.getInstance().setUiLanguage(language)
+    }
+
+    private fun refreshLocalizedTexts(rebuildSettings: Boolean = true) {
+        val text = CphText.current()
+        settingsTabButton.text = text.settingsTab
+        utilitySettingsTabButton.text = text.utilityTab
+        themeSettingsTabButton.text = text.themesTab
+        enableCphButton.text = text.startCph
+        singleFileModeEnabled.text = text.singleFileMode
+        ignoreTrailingWhitespace.text = text.ignoreTrailingWhitespace
+        outputSplitEnabled.text = text.outputSplit
+        noExpectedModeEnabled.text = text.noExpectedMode
+        confidentSubmitEnabled.text = text.confidentSubmit
+        runSelectedCaseButton.text = runSelectedButtonText()
+        debugSelectedCaseButton.text = text.debug
+        setTitleActionButtonText(inputCopyButton, text.copy)
+        setTitleActionButtonText(expectedCopyButton, text.copy)
+        setTitleActionButtonText(actualCopyButton, text.copy)
+        setTitleActionButtonText(actualToExpectedButton, text.setExpectedShort)
+        runAllButton.toolTipText = text.runAllEnabledCases
+        resetCasesButton.toolTipText = text.resetCases
+        runSelectedCaseButton.toolTipText = text.runThisCase
+        debugSelectedCaseButton.toolTipText = text.debugThisCase
+        inputCopyButton.toolTipText = text.copySection(text.input)
+        expectedCopyButton.toolTipText = text.copySection(text.expectedOutput)
+        actualCopyButton.toolTipText = text.copySection(text.standardOutput)
+        actualToExpectedButton.toolTipText = text.setActualAsExpectedTooltip
+        settingsButton.toolTipText = if (settingsVisible) text.hideSettings else text.settings
+        helpButton.toolTipText = text.cphDocs
+        singleFileModeEnabled.toolTipText = text.singleFileTooltip
+        singleFileWorkingDirectoryField.toolTipText = text.workingDirectoryTooltip
+        singleFileWorkingDirectoryChooserButton.toolTipText = text.chooseWorkingDirectoryTooltip
+        listOf(runAllShortcutField, runSelectedCaseShortcutField, debugSelectedCaseShortcutField, submitShortcutField)
+            .forEach { it.refreshLocalizedText() }
+        applyingLanguageSettings = true
+        try {
+            languageCombo.selectedItem = CphUiLanguage.current()
+        } finally {
+            applyingLanguageSettings = false
+        }
+        if (rebuildSettings) {
+            rebuildSettingsGrid()
+            refreshSettingsTabButtons()
+            refreshCodeforcesPluginUi()
+            refreshThemePluginUi()
+            refreshSettingsHelpButton()
+            refreshSubmitButtonTooltip()
+        }
     }
 
     private fun buildTop(): JComponent {
@@ -519,6 +625,22 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun configureSubmitButton() {
         configureToolbarIconButton(submitButton, { theme.run })
+    }
+
+    private fun configureEnableCphButton() {
+        enableCphButton.foreground = Color(0xF7FFF9)
+        enableCphButton.background = theme.good
+        enableCphButton.isOpaque = false
+        enableCphButton.isContentAreaFilled = false
+        enableCphButton.isBorderPainted = false
+        enableCphButton.isFocusPainted = false
+        enableCphButton.isRolloverEnabled = true
+        enableCphButton.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        enableCphButton.font = decorativeFont(enableCphButton.font, Font.BOLD, 2.0f)
+        enableCphButton.border = EmptyBorder(0, 0, 0, 0)
+        enableCphButton.preferredSize = Dimension(JBUIScale.scale(156), JBUIScale.scale(46))
+        enableCphButton.minimumSize = enableCphButton.preferredSize
+        enableCphButton.maximumSize = enableCphButton.preferredSize
     }
 
     private fun configureVerdictLabel() {
@@ -596,8 +718,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun setSubmitBusy(busy: Boolean) {
         val featureEnabled = isCodeforcesSubmitPluginEnabled()
         submitBusy = busy && featureEnabled
-        submitButton.isVisible = featureEnabled
-        submitButton.isEnabled = featureEnabled && !submitBusy && stateService.getState().singleFileModeEnabled
+        applySubmitButtonAvailability(featureEnabled = featureEnabled)
         refreshToolbarIconButton(submitButton, theme.run)
         if (submitBusy) {
             if (!submitSpinnerTimer.isRunning) {
@@ -620,7 +741,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         submissionStatusPanel.repaint()
     }
 
-    private fun refreshSubmitButtonTooltip() {
+    private fun applySubmitButtonAvailability(
+        featureEnabled: Boolean = isCodeforcesSubmitPluginEnabled(),
+        singleFileModeEnabled: Boolean = stateService.getState().singleFileModeEnabled,
+    ) {
+        submitButton.isVisible = featureEnabled
+        submitButton.isEnabled = featureEnabled && !submitBusy && singleFileModeEnabled
+    }
+
+    private fun refreshSubmitButtonTooltip(singleFileModeEnabled: Boolean = stateService.getState().singleFileModeEnabled) {
         if (!isCodeforcesSubmitPluginEnabled()) {
             submitButton.toolTipText = null
             return
@@ -628,20 +757,31 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val tab = CphActiveTabService.getInstance().current()
         val ctx = tab?.let { CphSubmitContextResolver.resolve(it.url) }
         submitButton.toolTipText = when {
-            !stateService.getState().singleFileModeEnabled -> "Enable pure single-file mode before submitting to Codeforces"
-            ctx != null -> "Submit current file → ${ctx.displayId}"
-            tab != null -> "Active tab is not a Codeforces problem page"
-            else -> "No active Codeforces tab — install the CPH Target Runner browser extension"
+            !singleFileModeEnabled -> CphText.current().submitDisabledSingleFile
+            ctx != null -> CphText.current().submitCurrentFile(ctx.displayId)
+            tab != null -> CphText.current().activeTabNotCodeforces
+            else -> CphText.current().noActiveCodeforcesTab
         }
     }
 
     private fun refreshSubmitFeatureVisibility() {
         val enabled = isCodeforcesSubmitPluginEnabled()
-        submitButton.isVisible = enabled
+        applySubmitButtonAvailability(featureEnabled = enabled)
         if (!enabled) {
             hideSubmissionStatus()
         }
         setSubmitBusy(submitBusy)
+        revalidate()
+        repaint()
+    }
+
+    private fun refreshSubmitAvailability(singleFileModeEnabled: Boolean = stateService.getState().singleFileModeEnabled) {
+        val featureEnabled = isCodeforcesSubmitPluginEnabled()
+        applySubmitButtonAvailability(
+            featureEnabled = featureEnabled,
+            singleFileModeEnabled = singleFileModeEnabled,
+        )
+        refreshSubmitButtonTooltip(singleFileModeEnabled)
         revalidate()
         repaint()
     }
@@ -785,9 +925,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             else -> theme.panel
         }
         helpButton.border = EmptyBorder(4, 8, 4, 8)
-        helpButton.preferredSize = settingsHelpButtonSize()
-        helpButton.minimumSize = helpButton.preferredSize
-        helpButton.maximumSize = helpButton.preferredSize
         helpButton.isOpaque = highlighted
         helpButton.isContentAreaFilled = highlighted
         helpButton.isBorderPainted = false
@@ -795,18 +932,23 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             helpButton.putClientProperty(AVE_MUJICA_ICON_NAME_PROPERTY, "help")
             helpButton.putClientProperty(AVE_MUJICA_ICON_SIZE_PROPERTY, settingsHelpIconSize())
             val icon = aveMujicaSettingsHelpIcon(pressed)
-            helpButton.text = if (icon == null) "帮助" else null
+            helpButton.text = if (icon == null) CphText.current().help else null
             helpButton.icon = icon
             helpButton.iconTextGap = 0
             helpButton.font = decorativeFont(baseButtonFont(helpButton), Font.BOLD, 2.0f)
         } else {
             helpButton.putClientProperty(AVE_MUJICA_ICON_NAME_PROPERTY, null)
             helpButton.putClientProperty(AVE_MUJICA_ICON_SIZE_PROPERTY, null)
-            helpButton.text = "帮助"
+            helpButton.text = CphText.current().help
             helpButton.icon = HelpGlyphIcon(if (helpButton.isEnabled) theme.text else theme.muted, settingsClassicHelpIconSize())
             helpButton.iconTextGap = 6
             helpButton.font = actionButtonFont(helpButton)
         }
+        val buttonSize = settingsHelpButtonSize()
+        helpButton.preferredSize = buttonSize
+        helpButton.minimumSize = buttonSize
+        helpButton.maximumSize = buttonSize
+        helpButton.revalidate()
         helpButton.repaint()
     }
 
@@ -824,7 +966,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return if (theme.id == CphThemeId.AVE_MUJICA) {
             Dimension(122, 45)
         } else {
-            Dimension(78, 32)
+            val insets = helpButton.insets
+            val text = helpButton.text.orEmpty()
+            val icon = helpButton.icon
+            val iconWidth = icon?.iconWidth ?: 0
+            val iconHeight = icon?.iconHeight ?: 0
+            val textWidth = if (text.isNotEmpty()) helpButton.getFontMetrics(helpButton.font).stringWidth(text) else 0
+            val textHeight = if (text.isNotEmpty()) helpButton.getFontMetrics(helpButton.font).height else 0
+            val gap = if (iconWidth > 0 && text.isNotEmpty()) helpButton.iconTextGap else 0
+            val width = insets.left + iconWidth + gap + textWidth + insets.right + 8
+            val height = insets.top + maxOf(iconHeight, textHeight) + insets.bottom
+            Dimension(width.coerceAtLeast(92), height.coerceAtLeast(32))
         }
     }
 
@@ -886,17 +1038,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun refreshThemedRunActionIcon(button: JButton, pressed: Boolean) {
         when (button) {
-            runSelectedCaseButton -> setThemeButtonFace(button, "run_selected", pressed, RUN_SELECTED_BUTTON_TEXT, null, runActionIconSize())
-            debugSelectedCaseButton -> setThemeButtonFace(button, "debug", pressed, "Debug", AllIcons.Actions.StartDebugger, runActionIconSize())
+            runSelectedCaseButton -> setThemeButtonFace(button, "run_selected", pressed, runSelectedButtonText(), null, runActionIconSize())
+            debugSelectedCaseButton -> setThemeButtonFace(button, "debug", pressed, CphText.current().debug, AllIcons.Actions.StartDebugger, runActionIconSize())
         }
     }
 
     private fun toolbarButtonSize(): Dimension {
-        return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(55, 45) else Dimension(34, 28)
+        return Dimension(55, 45)
     }
 
     private fun toolbarIconSize(): Int {
-        return if (theme.id == CphThemeId.AVE_MUJICA) aveMujicaIconSize(36) else 28
+        return if (theme.id == CphThemeId.AVE_MUJICA) aveMujicaIconSize(36) else 36
     }
 
     private fun runActionIconSize(): Int {
@@ -930,8 +1082,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             return
         }
         button.text = when (button) {
-            runSelectedCaseButton -> "Run"
-            debugSelectedCaseButton -> "Debug"
+            runSelectedCaseButton -> CphText.current().run
+            debugSelectedCaseButton -> CphText.current().debug
             else -> null
         }
         button.icon = themedIcon(iconName, button, pressed, iconSize)
@@ -1138,12 +1290,104 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         singleFileWorkingDirectoryChooserButton.maximumSize = singleFileWorkingDirectoryChooserButton.preferredSize
     }
 
+    private fun configureTitleActionButton(button: JButton, minWidth: Int) {
+        button.foreground = theme.muted
+        button.background = theme.panel
+        button.isOpaque = false
+        button.isContentAreaFilled = false
+        button.isBorderPainted = false
+        button.isFocusPainted = false
+        button.isRolloverEnabled = true
+        button.margin = Insets(0, 0, 0, 0)
+        button.border = EmptyBorder(0, 4, 0, 4)
+        button.font = baseButtonFont(button).deriveFont(Font.PLAIN, button.font.size2D - 1.0f)
+        button.putClientProperty(TITLE_ACTION_MIN_WIDTH_PROPERTY, minWidth)
+        resizeTitleActionButton(button)
+        button.model.addChangeListener(ChangeListener { refreshTitleActionButton(button) })
+        refreshTitleActionButton(button)
+    }
+
+    private fun setTitleActionButtonText(button: JButton, text: String) {
+        button.putClientProperty(TITLE_ACTION_DEFAULT_TEXT_PROPERTY, text)
+        if (button.getClientProperty(TITLE_ACTION_FEEDBACK_PROPERTY) != true) {
+            button.text = text
+        }
+        resizeTitleActionButton(button)
+    }
+
+    private fun resizeTitleActionButton(button: JButton) {
+        val minWidth = button.getClientProperty(TITLE_ACTION_MIN_WIDTH_PROPERTY) as? Int ?: TITLE_ACTION_MIN_WIDTH
+        val metrics = button.getFontMetrics(button.font)
+        val textWidth = metrics.stringWidth(button.text.orEmpty())
+        val width = maxOf(minWidth, textWidth + TITLE_ACTION_HORIZONTAL_PADDING * 2)
+        val height = maxOf(TITLE_ACTION_BUTTON_HEIGHT, metrics.height + TITLE_ACTION_VERTICAL_PADDING * 2)
+        val size = Dimension(width, height)
+        button.preferredSize = size
+        button.minimumSize = size
+        button.maximumSize = size
+        button.revalidate()
+    }
+
+    private fun refreshTitleActionButton(button: JButton) {
+        val model = button.model
+        val pressed = model.isPressed && model.isArmed
+        val success = button.getClientProperty(TITLE_ACTION_FEEDBACK_PROPERTY) == true
+        button.foreground = when {
+            !button.isEnabled -> theme.muted
+            success -> theme.good
+            model.isRollover -> theme.text
+            else -> theme.muted
+        }
+        button.background = when {
+            !button.isEnabled -> theme.panel
+            pressed -> theme.actionPressed
+            model.isRollover || success -> theme.actionHover
+            else -> theme.panel
+        }
+        val highlighted = button.isEnabled && (pressed || model.isRollover || success)
+        button.isOpaque = highlighted
+        button.isContentAreaFilled = highlighted
+        button.border = EmptyBorder(0, 4, 0, 4)
+        button.repaint()
+    }
+
     private fun buildCenter(): JComponent {
         contentCards.background = theme.panel
+        contentCards.add(buildOnboardingView(), ONBOARDING_VIEW_CARD)
         contentCards.add(buildMainView(), MAIN_VIEW_CARD)
         contentCards.add(buildSettingsView(), SETTINGS_VIEW_CARD)
         showActiveView()
         return contentCards
+    }
+
+    private fun buildOnboardingView(): JComponent {
+        val view = JPanel(GridBagLayout())
+        view.background = theme.panel
+
+        val content = JPanel()
+        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
+        content.background = theme.panel
+
+        val icon = IconLoader.getIcon("/META-INF/pluginIcon.svg", CphToolWindowPanel::class.java)
+        val iconLabel = JBLabel(IconUtil.scale(icon, null, WELCOME_ICON_SCALE)).also {
+            it.alignmentX = Component.CENTER_ALIGNMENT
+        }
+        enableCphButton.alignmentX = Component.CENTER_ALIGNMENT
+
+        content.add(iconLabel)
+        content.add(Box.createVerticalStrut(JBUIScale.scale(22)))
+        content.add(enableCphButton)
+
+        val constraints = GridBagConstraints().also {
+            it.gridx = 0
+            it.gridy = 0
+            it.weightx = 1.0
+            it.weighty = 1.0
+            it.anchor = GridBagConstraints.NORTH
+            it.insets = Insets(JBUIScale.scale(96), 0, 0, 0)
+        }
+        view.add(content, constraints)
+        return view
     }
 
     private fun buildMainView(): JComponent {
@@ -1212,6 +1456,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         outputSplitEnabled.isOpaque = false
         noExpectedModeEnabled.isOpaque = false
         confidentSubmitEnabled.isOpaque = false
+        languageCombo.background = theme.surface
         cppStandardCombo.background = theme.surface
         compileOptionsField.background = theme.editor
         compileOptionsField.foreground = theme.text
@@ -1242,34 +1487,36 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun rebuildSettingsGrid() {
         settingsGrid.removeAll()
-        settingsGrid.add(settingsSection("运行设置", buildSettingsHelpHeaderComponent()) {
+        val text = CphText.current()
+        settingsGrid.add(settingsSection(text.runSettings, buildSettingsHelpHeaderComponent()) {
+            settingRow(text.interfaceLanguage, languageCombo)
             settingCheckBoxRow(singleFileModeEnabled)
-            settingRow("工作目录配置:", singleFileWorkingDirectoryControl())
-            settingRow("Time Limits:", timeoutControl())
-            settingRow("C++ 标准:", cppStandardCombo)
+            settingRow(text.workingDirectory, singleFileWorkingDirectoryControl())
+            settingRow(text.timeLimits, timeoutControl())
+            settingRow(text.cppStandard, cppStandardCombo)
             compileOptionsField.preferredSize = Dimension(260, compileOptionsField.preferredSize.height)
-            settingRow("Compile options:", compileOptionsField)
+            settingRow(text.compileOptions, compileOptionsField)
         })
         settingsGrid.add(Box.createVerticalStrut(8))
-        settingsGrid.add(settingsSection("输出设置") {
+        settingsGrid.add(settingsSection(text.outputSettings) {
             settingCheckBoxRow(ignoreTrailingWhitespace)
-            settingRow("字体大小:", editorFontSizeSpinner)
+            settingRow(text.fontSize, editorFontSizeSpinner)
             settingCheckBoxRow(noExpectedModeEnabled)
             settingCheckBoxRow(outputSplitEnabled)
         })
         if (isCodeforcesSubmitPluginEnabled()) {
             settingsGrid.add(Box.createVerticalStrut(8))
-            settingsGrid.add(settingsSection("提交设置") {
+            settingsGrid.add(settingsSection(text.submitSettings) {
                 settingCheckBoxRow(confidentSubmitEnabled)
             })
         }
         settingsGrid.add(Box.createVerticalStrut(8))
-        settingsGrid.add(settingsSection("快捷键") {
-            settingRow("全局运行快捷键：", runAllShortcutField)
-            settingRow("单CASE运行快捷键：", runSelectedCaseShortcutField)
-            settingRow("单CASE调试快捷键：", debugSelectedCaseShortcutField)
+        settingsGrid.add(settingsSection(text.shortcuts) {
+            settingRow("${text.runAllShortcut}:", runAllShortcutField)
+            settingRow("${text.runSelectedShortcut}:", runSelectedCaseShortcutField)
+            settingRow("${text.debugSelectedShortcut}:", debugSelectedCaseShortcutField)
             if (isCodeforcesSubmitPluginEnabled()) {
-                settingRow("提交CF快捷键：", submitShortcutField)
+                settingRow("${text.submitShortcut}:", submitShortcutField)
             }
         })
         settingsGrid.revalidate()
@@ -1357,18 +1604,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun buildCodeforcesSubmitPluginRow(): JComponent {
+        val text = CphText.current()
         val icon = JBLabel(IconLoader.getIcon("/icons/codeforces.svg", CphToolWindowPanel::class.java)).also {
             it.horizontalAlignment = SwingConstants.CENTER
             it.preferredSize = Dimension(70, 64)
             it.minimumSize = it.preferredSize
             it.maximumSize = it.preferredSize
         }
-        val title = JBLabel("Codeforces 远程提交").also {
+        val title = JBLabel(text.codeforcesSubmitTitle).also {
             it.foreground = theme.text
             it.font = it.font.deriveFont(Font.BOLD)
             it.alignmentX = Component.LEFT_ALIGNMENT
         }
-        val summary = JBTextArea("使用浏览器当前 Codeforces 题面和登录态提交当前 C++ 文件。").also {
+        val summary = JBTextArea(text.codeforcesSubmitSummary).also {
             it.foreground = theme.muted
             it.background = theme.surface
             it.isOpaque = false
@@ -1378,7 +1626,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.border = EmptyBorder(0, 0, 0, 0)
             it.alignmentX = Component.LEFT_ALIGNMENT
         }
-        val text = JPanel().also {
+        val textPanel = JPanel().also {
             it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
             it.background = theme.surface
             it.alignmentX = Component.LEFT_ALIGNMENT
@@ -1389,7 +1637,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val left = JPanel(BorderLayout(12, 0)).also {
             it.background = theme.surface
             it.add(icon, BorderLayout.WEST)
-            it.add(text, BorderLayout.CENTER)
+            it.add(textPanel, BorderLayout.CENTER)
         }
         val right = JPanel(GridBagLayout()).also {
             it.background = theme.surface
@@ -1424,11 +1672,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun refreshCodeforcesPluginUi() {
         val enabled = isCodeforcesSubmitPluginEnabled()
-        codeforcesPluginToggleButton.text = if (enabled) "禁用" else "启用"
+        val text = CphText.current()
+        codeforcesPluginToggleButton.text = if (enabled) text.disable else text.enable
         codeforcesPluginToggleButton.toolTipText = if (enabled) {
-            "Disable Codeforces remote submit"
+            text.codeforcesDisableTooltip
         } else {
-            "Enable Codeforces remote submit"
+            text.codeforcesEnableTooltip
         }
         codeforcesPluginToggleButton.foreground = if (enabled) theme.bad else theme.good
         codeforcesPluginToggleButton.background = theme.surface
@@ -1441,7 +1690,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun buildClassicThemeRow(): JComponent {
         return buildThemeRow(
             palette = CphThemes.classic,
-            summary = "沿用当前 CPH 深色界面与状态配色。",
+            summary = CphText.current().classicThemeSummary,
             icon = IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java),
             toggleButton = classicThemeToggleButton,
         )
@@ -1450,7 +1699,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun buildAveMujicaThemeRow(): JComponent {
         return buildThemeRow(
             palette = CphThemes.aveMujica,
-            summary = "Ave Mujica 暗色面板、金色操作高亮与角色功能图标。",
+            summary = CphText.current().aveMujicaThemeSummary,
             icon = scaledResourceIcon("/icons/avemujica/generated/512/theme/normal.png", aveMujicaIconSize(46))
                 ?: IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java),
             titleIcon = scaledAspectResourceIcon(
@@ -1475,7 +1724,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.minimumSize = it.preferredSize
             it.maximumSize = it.preferredSize
         }
-        val title = JBLabel(palette.displayName).also {
+        val title = JBLabel(CphText.current().themeName(palette.id)).also {
             if (titleIcon != null) {
                 it.text = null
                 it.icon = titleIcon
@@ -1557,14 +1806,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshThemeToggleButton(
             classicThemeToggleButton,
             classicSelected,
-            "Default theme is enabled",
-            "Enable default theme",
+            CphText.current().defaultThemeEnabled,
+            CphText.current().enableDefaultTheme,
         )
         refreshThemeToggleButton(
             aveMujicaThemeToggleButton,
             aveMujicaSelected,
-            "Ave Mujica theme is enabled",
-            "Enable Ave Mujica theme",
+            CphText.current().aveMujicaThemeEnabled,
+            CphText.current().enableAveMujicaTheme,
         )
     }
 
@@ -1574,7 +1823,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         selectedTooltip: String,
         availableTooltip: String,
     ) {
-        button.text = if (selected) "已启用" else "启用"
+        val text = CphText.current()
+        button.text = if (selected) text.enabled else text.enable
         button.toolTipText = if (selected) selectedTooltip else availableTooltip
         button.foreground = if (selected) theme.run else theme.good
         button.background = theme.surface
@@ -1608,6 +1858,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         repaint()
     }
 
+    private fun rebuildLocalizedLayout() {
+        if (running) {
+            refreshLocalizedTexts()
+            rebuildOutputLayout()
+            refreshTabs()
+            updateActions()
+            return
+        }
+        flushSelectedCase()
+        refreshLocalizedTexts(rebuildSettings = false)
+        rebuildThemedLayout()
+    }
+
     private fun buildSettingsReturnHint(): JComponent {
         settingsReturnHintPanel.removeAll()
         settingsReturnHintPanel.background = theme.surface
@@ -1618,7 +1881,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         settingsReturnHintPanel.alignmentX = Component.LEFT_ALIGNMENT
         settingsReturnHintPanel.isVisible = false
         settingsReturnHintPanel.add(
-            JBLabel("提示：再次点击设置按钮可回到主界面").also {
+            JBLabel(CphText.current().settingsReturnHint).also {
                 it.foreground = theme.text
             },
             BorderLayout.CENTER,
@@ -1698,11 +1961,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun showActiveView() {
         val card = when {
+            !isCphEnabled() -> ONBOARDING_VIEW_CARD
             settingsVisible -> SETTINGS_VIEW_CARD
             else -> MAIN_VIEW_CARD
         }
+        topView?.isVisible = isCphEnabled()
         (contentCards.layout as? CardLayout)?.show(contentCards, card)
-        settingsButton.toolTipText = if (settingsVisible) "Hide settings" else "Settings"
+        settingsButton.toolTipText = if (settingsVisible) CphText.current().hideSettings else CphText.current().settings
         refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
         refreshSettingsHelpButton()
         refreshSettingsTabButtons()
@@ -1765,7 +2030,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun chooseSingleFileWorkingDirectory() {
         val descriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor()
-            .withTitle("Choose Working Directory")
+            .withTitle(CphText.current().chooseWorkingDirectory)
         val selected = FileChooser.chooseFile(descriptor, project, null) ?: return
         setSingleFileWorkingDirectoryText(displayWorkingDirectoryPath(selected.path))
         persistSingleFileWorkingDirectory()
@@ -1809,9 +2074,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val duplicateMessage = CphShortcutMatcher.duplicateShortcutMessage(
             nextState,
             codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled(),
+            language = CphUiLanguage.current(),
         )
         if (duplicateMessage != null) {
-            StatusBar.Info.set("CPH shortcut settings: $duplicateMessage", project)
+            StatusBar.Info.set(CphText.current().shortcutSettingsDuplicate(duplicateMessage), project)
             return
         }
         CphShortcutSettings.getInstance().update(nextState)
@@ -1910,10 +2176,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             editorPanel.border = EmptyBorder(0, 0, 0, 0)
             editorPanel.add(
                 resizableLabeled(
-                    "Input",
+                    CphText.current().input,
                     scroll(inputArea, uiState.inputHeight),
                     uiState.inputHeight,
-                    inputActions(),
+                    titleInlineAction = titleActionGroup(inputCopyButton),
+                    titleAction = inputActions(),
                 ) {
                     stateService.getState().ui.inputHeight = it
                 },
@@ -1942,14 +2209,26 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun singleActualOutput(uiState: CphUiState): JComponent {
-        return labeledOutput("Actual output", scroll(actualArea, uiState.actualHeight))
+        return labeledOutput(
+            CphText.current().standardOutput,
+            scroll(actualArea, uiState.actualHeight),
+            titleActionGroup(actualCopyButton, actualToExpectedButton),
+        )
     }
 
     private fun horizontalOutputSplit(uiState: CphUiState): JSplitPane {
         return outputSplitPane(
             orientation = JSplitPane.HORIZONTAL_SPLIT,
-            first = labeledOutput("Actual output", scroll(actualArea, uiState.actualHeight)),
-            second = labeledOutput("Expected output", scroll(expectedArea, uiState.expectedHeight)),
+            first = labeledOutput(
+                CphText.current().standardOutput,
+                scroll(actualArea, uiState.actualHeight),
+                titleActionGroup(actualCopyButton, actualToExpectedButton),
+            ),
+            second = labeledOutput(
+                CphText.current().expectedOutput,
+                scroll(expectedArea, uiState.expectedHeight),
+                titleActionGroup(expectedCopyButton),
+            ),
         ).also { splitPane ->
             var applyingSavedRatio = true
             splitPane.resizeWeight = uiState.outputSplitRatio
@@ -1968,8 +2247,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val uiState = stateService.getState().ui
         return outputSplitPane(
             orientation = JSplitPane.VERTICAL_SPLIT,
-            first = labeledOutput("Expected output", scroll(expectedArea, uiState.expectedHeight)),
-            second = labeledOutput("Actual output", scroll(actualArea, uiState.actualHeight)),
+            first = labeledOutput(
+                CphText.current().expectedOutput,
+                scroll(expectedArea, uiState.expectedHeight),
+                titleActionGroup(expectedCopyButton),
+            ),
+            second = labeledOutput(
+                CphText.current().standardOutput,
+                scroll(actualArea, uiState.actualHeight),
+                titleActionGroup(actualCopyButton, actualToExpectedButton),
+            ),
         ).also { splitPane ->
             splitPane.resizeWeight = 0.5
             SwingUtilities.invokeLater { splitPane.setDividerLocation(0.5) }
@@ -2030,13 +2317,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         )
     }
 
-    private fun labeledOutput(label: String, component: JComponent): JComponent {
+    private fun labeledOutput(label: String, component: JComponent, titleInlineAction: JComponent? = null): JComponent {
         return JPanel(BorderLayout(0, 6)).also {
             it.background = theme.panel
             it.isOpaque = true
             it.border = EmptyBorder(0, 0, 0, 0)
             it.minimumSize = Dimension(0, 0)
-            it.add(JBLabel(label).also { title -> title.foreground = theme.text }, BorderLayout.NORTH)
+            it.add(titleHeader(label, titleInlineAction), BorderLayout.NORTH)
             it.add(component, BorderLayout.CENTER)
         }
     }
@@ -2045,10 +2332,41 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         label: String,
         component: JComponent,
         height: Int,
+        titleInlineAction: JComponent? = null,
         titleAction: JComponent? = null,
         onHeightChanged: (Int) -> Unit,
     ): JComponent {
-        return ResizableEditorSection(label, component, height, titleAction, onHeightChanged)
+        return ResizableEditorSection(label, component, height, titleInlineAction, titleAction, onHeightChanged)
+    }
+
+    private fun titleHeader(
+        label: String,
+        titleInlineAction: JComponent? = null,
+        titleAction: JComponent? = null,
+    ): JComponent {
+        return JPanel(BorderLayout(8, 0)).also { row ->
+            row.background = theme.panel
+            row.isOpaque = false
+            val left = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
+                it.background = theme.panel
+                it.isOpaque = false
+                it.add(JBLabel(label).also { title -> title.foreground = theme.text })
+                titleInlineAction?.let { action ->
+                    it.add(Box.createHorizontalStrut(8))
+                    it.add(action)
+                }
+            }
+            row.add(left, BorderLayout.WEST)
+            titleAction?.let { row.add(it, BorderLayout.EAST) }
+        }
+    }
+
+    private fun titleActionGroup(vararg buttons: JButton): JComponent {
+        return JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).also {
+            it.background = theme.panel
+            it.isOpaque = false
+            buttons.forEach(it::add)
+        }
     }
 
     private fun inputActions(): JComponent {
@@ -2096,11 +2414,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         label: String,
         private val component: JComponent,
         initialHeight: Int,
+        titleInlineAction: JComponent?,
         titleAction: JComponent?,
         private val onHeightChanged: (Int) -> Unit,
     ) : JPanel(BorderLayout(0, 6)) {
-        private val title = JBLabel(label)
-        private val titleRow = JPanel(BorderLayout())
+        private val titleRow = titleHeader(label, titleInlineAction, titleAction)
         private val dragHandle = ResizeHandle()
         private var editorHeight = CphStateService.clampEditorHeight(initialHeight)
         private var dragStartY = 0
@@ -2111,10 +2429,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             border = EmptyBorder(0, 0, 0, 0)
             alignmentX = Component.LEFT_ALIGNMENT
 
-            titleRow.background = theme.panel
-            titleRow.add(title, BorderLayout.WEST)
-            titleAction?.let { titleRow.add(it, BorderLayout.EAST) }
-
             val editorContainer = JPanel(BorderLayout())
             editorContainer.background = theme.panel
             editorContainer.add(component, BorderLayout.CENTER)
@@ -2123,7 +2437,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             add(titleRow, BorderLayout.NORTH)
             add(editorContainer, BorderLayout.CENTER)
 
-            dragHandle.toolTipText = "Drag to resize"
+            dragHandle.toolTipText = CphText.current().dragToResize
             dragHandle.cursor = Cursor.getPredefinedCursor(Cursor.S_RESIZE_CURSOR)
             dragHandle.addMouseListener(object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) {
@@ -2268,7 +2582,61 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         })
     }
 
+    private fun copyEditorText(area: JBTextArea, button: JButton, label: String) {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(area.text), null)
+        val message = CphText.current().copiedSection(label)
+        showTitleActionFeedback(button, message)
+    }
+
+    private fun setActualOutputAsExpected() {
+        val testCase = selectedCase ?: return
+        val text = actualArea.text
+        expectedArea.text = text
+        testCase.expectedOutput = text
+        refreshActualDiffHighlights()
+        refreshTabs()
+        showTitleActionFeedback(actualToExpectedButton, CphText.current().actualSetAsExpected)
+    }
+
+    private fun showTitleActionFeedback(button: JButton, message: String) {
+        titleActionFeedbackTimers.remove(button)?.stop()
+        button.putClientProperty(TITLE_ACTION_FEEDBACK_PROPERTY, true)
+        button.text = CphText.current().doneShort
+        resizeTitleActionButton(button)
+        button.toolTipText = message
+        StatusBar.Info.set(message, project)
+        refreshTitleActionButton(button)
+
+        val timer = Timer(TITLE_ACTION_FEEDBACK_VISIBLE_MILLIS) {
+            button.putClientProperty(TITLE_ACTION_FEEDBACK_PROPERTY, false)
+            button.text = button.getClientProperty(TITLE_ACTION_DEFAULT_TEXT_PROPERTY) as? String ?: button.text
+            resizeTitleActionButton(button)
+            restoreTitleActionTooltip(button)
+            refreshTitleActionButton(button)
+            titleActionFeedbackTimers.remove(button)
+        }.also {
+            it.isRepeats = false
+        }
+        titleActionFeedbackTimers[button] = timer
+        timer.start()
+    }
+
+    private fun restoreTitleActionTooltip(button: JButton) {
+        val text = CphText.current()
+        button.toolTipText = when (button) {
+            inputCopyButton -> text.copySection(text.input)
+            expectedCopyButton -> text.copySection(text.expectedOutput)
+            actualCopyButton -> text.copySection(text.standardOutput)
+            actualToExpectedButton -> text.setActualAsExpectedTooltip
+            else -> button.toolTipText
+        }
+    }
+
     private fun refreshTarget() {
+        if (!isCphEnabled()) {
+            showActiveView()
+            return
+        }
         flushSelectedCase()
         currentIdentity = CphTargetResolver.current(project)
         currentTargetCases = stateService.getOrCreateTargetCases(currentIdentity)
@@ -2325,6 +2693,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun scheduleTargetRefresh() {
+        if (!isCphEnabled()) {
+            showActiveView()
+            return
+        }
         if (running) {
             pendingTargetRefresh = true
             return
@@ -2411,10 +2783,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         targetCases: CphTargetCases,
         testCase: CphTestCase,
     ) {
-        StatusBar.Info.set("CPH Debug: preparing ${testCase.name}", project)
-        object : Task.Backgroundable(project, "Preparing CPH debug", false) {
+        StatusBar.Info.set(CphText.current().debugPreparingStatus(testCase.name), project)
+        object : Task.Backgroundable(project, CphText.current().preparingDebugTask(), false) {
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Preparing ${testCase.name}"
+                indicator.text = CphText.current().preparingCase(testCase.name)
                 val syncError = compileSettingsSynchronizer.sync(
                     identity,
                     targetCases,
@@ -2433,7 +2805,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun launchDebugCase(identity: CphTargetIdentity, testCase: CphTestCase) {
-        StatusBar.Info.set("CPH Debug: launching ${testCase.name}", project)
+        StatusBar.Info.set(CphText.current().debugLaunchingStatus(testCase.name), project)
         try {
             CphRunner(project).debugCase(identity, testCase)
         } catch (e: Throwable) {
@@ -2447,6 +2819,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun runCases(cases: List<CphTestCase>, source: ActiveRunButton) {
+        if (!isCphEnabled()) return
         if (cases.isEmpty() || running) return
         val runCases = cases.toList()
         val identity = currentIdentity
@@ -2465,7 +2838,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         startRunSpinner(source)
         setRunning(true)
 
-        object : Task.Backgroundable(project, "Running CPH samples", true) {
+        object : Task.Backgroundable(project, CphText.current().runningSamplesTask(), true) {
             override fun run(indicator: ProgressIndicator) {
                 val runner = CphRunner(project)
                 val saveError = saveAllDocumentsBeforeRun()
@@ -2494,7 +2867,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     return
                 }
 
-                indicator.text = "Preparing CPH run target"
+                indicator.text = CphText.current().preparingRunTarget()
                 val preparedTarget = when (val preparation = runner.prepareForRun(identity)) {
                     is CphRunPreparation.Failed -> {
                         runCases.forEach { it.lastResult = preparation.result.copy() }
@@ -2504,59 +2877,35 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     is CphRunPreparation.Ready -> preparation.target
                 }
 
-                val parallelism = caseRunParallelism(runCases.size)
-                val executor = Executors.newFixedThreadPool(parallelism) { task ->
-                    Thread(task, "CPH case runner").apply { isDaemon = true }
-                }
-                val completionService = ExecutorCompletionService<Pair<CphTestCase, CphCaseResult>>(executor)
-                indicator.text = "Running ${runCases.size} CPH samples"
-                runCases.forEach { testCase ->
-                    completionService.submit {
-                        val result = runCatching {
-                            runner.runPreparedCase(
-                                preparedTarget,
-                                testCase,
-                                timeoutMillis,
-                                ignoreTrailing,
-                                compareExpectedOutput = !noExpectedMode,
-                            ).let {
-                                if (noExpectedMode) CphStatusMapper.normalizeNoExpectedResult(it) else it
-                            }
-                        }.getOrElse { error ->
-                            CphCaseResult(
-                                verdict = CphVerdict.ERROR,
-                                message = error.message ?: error.javaClass.simpleName,
-                            )
-                        }
-                        testCase to result
-                    }
-                }
-
-                var completedCases = 0
-                try {
-                    while (completedCases < runCases.size && !indicator.isCanceled) {
-                        val (testCase, result) = completionService.take().get()
-                        completedCases += 1
-                        indicator.text = "Completed $completedCases/${runCases.size} CPH samples"
-                        indicator.fraction = completedCases.toDouble() / runCases.size
-                        testCase.lastResult = result
-                        ApplicationManager.getApplication().invokeLater {
-                            reportCaseError(testCase, result)
-                            runtimeStates.remove(testCase.id)
-                            refreshTabs()
-                            if (selectedCase?.id == testCase.id) {
-                                renderSelectedCase()
-                            }
+                val session = CphSampleRunSession(project, caseRunParallelism(runCases.size))
+                indicator.text = CphText.current().runningSamples(runCases.size)
+                val summary = session.run(
+                    preparedTarget = preparedTarget,
+                    cases = runCases,
+                    options = CphCaseRunOptions(
+                        timeoutMillis = timeoutMillis,
+                        ignoreTrailingWhitespace = ignoreTrailing,
+                        compareExpectedOutput = !noExpectedMode,
+                        noExpectedMode = noExpectedMode,
+                    ),
+                    indicator = indicator,
+                ) { completion ->
+                    indicator.text = CphText.current().completedSamples(completion.completedCases, completion.totalCases)
+                    indicator.fraction = completion.completedCases.toDouble() / completion.totalCases
+                    completion.testCase.lastResult = completion.result
+                    ApplicationManager.getApplication().invokeLater {
+                        reportCaseError(completion.testCase, completion.result)
+                        runtimeStates.remove(completion.testCase.id)
+                        refreshTabs()
+                        if (selectedCase?.id == completion.testCase.id) {
+                            renderSelectedCase()
                         }
                     }
-                } finally {
-                    executor.shutdownNow()
-                    executor.awaitTermination(1, TimeUnit.SECONDS)
                 }
                 if (indicator.isCanceled) {
                     return
                 }
-                completedAllCases = completedCases == runCases.size
+                completedAllCases = summary.completedAllCases
             }
 
             override fun onFinished() {
@@ -2575,7 +2924,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         renderSelectedCase()
                     }
                     if (shouldSubmit) {
-                        StatusBar.Info.set("CPH 自信模式：本地全部 AC，自动提交 Codeforces", project)
+                        StatusBar.Info.set(CphText.current().autoSubmitAllAc(), project)
                         CphSubmitOrchestrator.getInstance(project).submit()
                     }
                 }
@@ -2595,10 +2944,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             return
         }
         val statusMessage = CphUiText.errorStatusMessage(testCase.name, result)
+        val report = CphErrorReportBuilder.sample(project, currentIdentity, testCase, result)
         StatusBar.Info.set(statusMessage, project)
         NotificationGroupManager.getInstance()
             .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
-            .createNotification("CPH sample failed", CphUiText.errorNotificationContent(testCase.name, result), NotificationType.ERROR)
+            .createNotification(CphText.current().sampleFailedTitle(), CphUiText.errorNotificationContent(testCase.name, result), NotificationType.ERROR)
+            .addCphErrorActions(report)
             .notify(project)
     }
 
@@ -2615,7 +2966,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         )
         val error = result.error ?: return
         if (reportStatus) {
-            StatusBar.Info.set("CPH compile settings sync failed: $error", project)
+            val statusMessage = "CPH compile settings sync failed: $error"
+            val report = CphErrorReportBuilder.generic(project, currentIdentity, statusMessage, error)
+            StatusBar.Info.set(statusMessage, project)
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+                .createNotification(CphText.current().cphErrorTitle, statusMessage, NotificationType.ERROR)
+                .addCphErrorActions(report)
+                .notify(project)
         }
     }
 
@@ -2624,12 +2982,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             ApplicationManager.getApplication().invokeLater { reportDebugError(message) }
             return
         }
-        val statusMessage = "CPH Debug: $message"
+        val statusMessage = CphText.current().debugStatus(message)
+        val report = CphErrorReportBuilder.debug(project, currentIdentity, message)
         StatusBar.Info.set(statusMessage, project)
         NotificationGroupManager.getInstance()
             .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
-            .createNotification("CPH debug failed", statusMessage, NotificationType.ERROR)
+            .createNotification(CphText.current().debugFailedTitle(), statusMessage, NotificationType.ERROR)
+            .addCphErrorActions(report)
             .notify(project)
+    }
+
+    private fun com.intellij.notification.Notification.addCphErrorActions(report: CphErrorReport): com.intellij.notification.Notification {
+        addAction(CphViewErrorLogAction(project, report))
+        addAction(CphReportErrorAction(project, report))
+        return this
     }
 
     private fun saveAllDocumentsBeforeRun(): Throwable? {
@@ -2674,7 +3040,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runSpinnerTimer.stop()
         activeRunButton = null
         runAllButton.text = RUN_ALL_BUTTON_TEXT
-        runSelectedCaseButton.text = RUN_SELECTED_BUTTON_TEXT
+        runSelectedCaseButton.text = runSelectedButtonText()
     }
 
     private fun updateRunSpinnerText() {
@@ -2682,9 +3048,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runSpinnerIndex++
         runAllButton.text = if (activeRunButton == ActiveRunButton.RUN_ALL) frame else RUN_ALL_BUTTON_TEXT
         runSelectedCaseButton.text = if (activeRunButton == ActiveRunButton.RUN_SELECTED) {
-            "$frame Run"
+            "$frame ${CphText.current().run}"
         } else {
-            RUN_SELECTED_BUTTON_TEXT
+            runSelectedButtonText()
         }
     }
 
@@ -3007,15 +3373,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val runAllActive = activeRunButton == ActiveRunButton.RUN_ALL
         val runSelectedActive = activeRunButton == ActiveRunButton.RUN_SELECTED
         val codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled()
+        val hasSelectedCase = selectedCase != null
         settingsButton.isEnabled = !running
-        runSelectedCaseButton.isEnabled = (selectedCase != null && runnable) || runSelectedActive
-        debugSelectedCaseButton.isEnabled = selectedCase != null && !running &&
+        runSelectedCaseButton.isEnabled = (hasSelectedCase && runnable) || runSelectedActive
+        debugSelectedCaseButton.isEnabled = hasSelectedCase && !running &&
             currentIdentity.runnable &&
             (currentIdentity.kind == CphTargetKind.CMAKE_APP || currentIdentity.kind == CphTargetKind.CPP_FILE)
+        inputCopyButton.isEnabled = hasSelectedCase
+        expectedCopyButton.isEnabled = hasSelectedCase
+        actualCopyButton.isEnabled = hasSelectedCase
+        actualToExpectedButton.isEnabled = hasSelectedCase && !running
         runAllButton.isEnabled = (currentTargetCases.cases.isNotEmpty() && runnable) || runAllActive
         resetCasesButton.isEnabled = !running
         timeoutSpinner.isEnabled = !running
         editorFontSizeSpinner.isEnabled = !running
+        languageCombo.isEnabled = !running
         noExpectedModeEnabled.isEnabled = !running
         confidentSubmitEnabled.isEnabled = codeforcesSubmitEnabled && !running && stateService.getState().singleFileModeEnabled
         ignoreTrailingWhitespace.isEnabled = !running
@@ -3031,6 +3403,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshThemePluginUi()
         refreshSubmitFeatureVisibility()
         refreshRunActionButtons()
+        listOf(inputCopyButton, expectedCopyButton, actualCopyButton, actualToExpectedButton).forEach(::refreshTitleActionButton)
     }
 
     private inner class CaseTab(
@@ -3067,7 +3440,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
 
             deleteCaseButton.isEnabled = !running
-            deleteCaseButton.toolTipText = "Delete case"
+            deleteCaseButton.toolTipText = CphText.current().deleteCase
             deleteCaseButton.foreground = if (deleteCaseButton.isEnabled) Color.WHITE else theme.muted
             deleteCaseButton.background = tabBackground
             deleteCaseButton.isOpaque = false
@@ -3177,7 +3550,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             minimumSize = caseTabMinimumSize()
             maximumSize = caseTabMaximumSize()
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            toolTipText = "Add case"
+            toolTipText = CphText.current().addCase
 
             button.isEnabled = !running
             button.toolTipText = toolTipText
@@ -3590,11 +3963,103 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun runSelectedButtonText(): String = "▷ ${CphText.current().run}"
+
+    private inner class OnboardingStartButton : JButton() {
+        init {
+            model.addChangeListener(ChangeListener { repaint() })
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val width = width
+                val height = height
+                val pressed = model.isPressed && model.isArmed
+                val hovered = model.isRollover
+                val arc = JBUIScale.scale(18)
+                val inset = JBUIScale.scale(2)
+                val bodyX = inset
+                val bodyY = inset + if (pressed) JBUIScale.scale(1) else 0
+                val bodyW = width - inset * 2
+                val bodyH = height - inset * 2
+
+                g2.color = Color(0x0A0D15)
+                g2.fillRoundRect(bodyX, bodyY + JBUIScale.scale(4), bodyW, bodyH, arc, arc)
+
+                val top = if (pressed) Color(0x48C36B) else Color(0x72E98A)
+                val bottom = if (pressed) Color(0x278F50) else Color(0x32B866)
+                g2.paint = LinearGradientPaint(
+                    0f,
+                    bodyY.toFloat(),
+                    0f,
+                    (bodyY + bodyH).toFloat(),
+                    floatArrayOf(0.0f, 0.58f, 1.0f),
+                    arrayOf(top, bottom, Color(0x21804A)),
+                )
+                g2.fillRoundRect(bodyX, bodyY, bodyW, bodyH, arc, arc)
+
+                g2.paint = LinearGradientPaint(
+                    0f,
+                    bodyY.toFloat(),
+                    width.toFloat(),
+                    (bodyY + bodyH).toFloat(),
+                    floatArrayOf(0.0f, 0.54f, 1.0f),
+                    arrayOf(Color(0xBDEBFF), Color(0xF4D6FF), Color(0x7EFFA6)),
+                )
+                g2.stroke = java.awt.BasicStroke(JBUIScale.scale(if (hovered) 3.0f else 2.0f))
+                g2.drawRoundRect(bodyX, bodyY, bodyW, bodyH, arc, arc)
+
+                g2.composite = AlphaComposite.SrcOver.derive(if (hovered) 0.28f else 0.18f)
+                g2.color = Color.WHITE
+                g2.fillRoundRect(
+                    bodyX + JBUIScale.scale(9),
+                    bodyY + JBUIScale.scale(6),
+                    bodyW - JBUIScale.scale(18),
+                    JBUIScale.scale(12),
+                    JBUIScale.scale(12),
+                    JBUIScale.scale(12),
+                )
+                g2.composite = AlphaComposite.SrcOver
+
+                g2.color = Color(0xF8FFF9)
+                g2.font = font
+                val metrics = g2.fontMetrics
+                val text = text.orEmpty()
+                val textX = (width - metrics.stringWidth(text)) / 2
+                val textY = (height - metrics.height) / 2 + metrics.ascent - if (pressed) 0 else JBUIScale.scale(1)
+                g2.drawString(text, textX, textY)
+
+                drawSparkle(g2, bodyX + JBUIScale.scale(13), bodyY + JBUIScale.scale(13), JBUIScale.scale(5), Color(0xFFF0A8))
+                drawSparkle(g2, bodyX + bodyW - JBUIScale.scale(16), bodyY + bodyH - JBUIScale.scale(13), JBUIScale.scale(4), Color(0xD9C4FF))
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        private fun drawSparkle(g2: Graphics2D, cx: Int, cy: Int, radius: Int, color: Color) {
+            g2.color = color
+            g2.stroke = java.awt.BasicStroke(JBUIScale.scale(1.4f))
+            g2.drawLine(cx - radius, cy, cx + radius, cy)
+            g2.drawLine(cx, cy - radius, cx, cy + radius)
+        }
+    }
+
     private companion object {
+        private const val ONBOARDING_VIEW_CARD = "onboarding"
         private const val MAIN_VIEW_CARD = "main"
         private const val SETTINGS_VIEW_CARD = "settings"
+        private const val WELCOME_ICON_SCALE = 1.7f
         private const val RESIZE_HANDLE_HEIGHT = 8
         private const val OUTPUT_DIVIDER_SIZE = 6
+        private const val TITLE_COPY_BUTTON_WIDTH = 30
+        private const val TITLE_SET_EXPECTED_BUTTON_WIDTH = 30
+        private const val TITLE_ACTION_MIN_WIDTH = 30
+        private const val TITLE_ACTION_BUTTON_HEIGHT = 18
+        private const val TITLE_ACTION_HORIZONTAL_PADDING = 8
+        private const val TITLE_ACTION_VERTICAL_PADDING = 1
+        private const val TITLE_ACTION_FEEDBACK_VISIBLE_MILLIS = 1100
         private const val TAB_STRIP_BASE_HEIGHT = 62
         private const val AVE_MUJICA_TAB_STRIP_BASE_HEIGHT = 66
         private const val AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD = 8
@@ -3617,7 +4082,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private val SUBMIT_SPINNER_FRAMES = arrayOf("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
         private val RUN_SPINNER_FRAMES = arrayOf("○", "◔", "◑", "◕")
         private const val RUN_ALL_BUTTON_TEXT = "▷"
-        private const val RUN_SELECTED_BUTTON_TEXT = "▷ Run"
         private const val CPH_DOCS_URL = "https://cph.kkkzbh.cn"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
         private const val AVE_MUJICA_FONT_RESOURCE = "/fonts/AnglicanText.ttf"
@@ -3635,10 +4099,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
         private const val SETTINGS_TAB_CONFIGURED_PROPERTY = "cph.settingsTab.configured"
         private const val BASE_FONT_PROPERTY = "cph.baseFont"
+        private const val TITLE_ACTION_DEFAULT_TEXT_PROPERTY = "cph.titleAction.defaultText"
+        private const val TITLE_ACTION_FEEDBACK_PROPERTY = "cph.titleAction.feedback"
+        private const val TITLE_ACTION_MIN_WIDTH_PROPERTY = "cph.titleAction.minWidth"
 
         private fun tabTitle(index: Int, status: TabStatus, includeStatusIcon: Boolean = true): String {
             return if (status == TabStatus.NOT_RUN) {
-                "$index CASE"
+                if (CphUiLanguage.current() == CphUiLanguage.ZH_CN) "$index 样例" else "$index CASE"
             } else if (includeStatusIcon) {
                 "$index ${status.icon} ${status.label}"
             } else {
@@ -3661,22 +4128,24 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
         private fun tabTooltip(testCase: CphTestCase, status: TabStatus): String {
+            val text = CphText.current()
+            val duration = formatDuration(testCase.lastResult.durationMillis)
             return when (status) {
-                TabStatus.OK -> "${testCase.name}: OK in ${formatDuration(testCase.lastResult.durationMillis)}"
+                TabStatus.OK -> text.caseOk(testCase.name, duration)
                 TabStatus.AC,
                 TabStatus.WA,
                 TabStatus.TLE,
-                TabStatus.RE -> "${testCase.name}: ${testCase.lastResult.verdict} in ${formatDuration(testCase.lastResult.durationMillis)}"
+                TabStatus.RE -> text.caseVerdict(testCase.name, testCase.lastResult.verdict, duration)
                 TabStatus.ERROR -> CphUiText.errorTooltip(testCase.name, testCase.lastResult)
-                TabStatus.RUNNING -> "${testCase.name}: running"
-                TabStatus.QUEUED -> "${testCase.name}: queued"
-                TabStatus.NOT_RUN -> "${testCase.name}: not run"
+                TabStatus.RUNNING -> text.caseRunning(testCase.name)
+                TabStatus.QUEUED -> text.caseQueued(testCase.name)
+                TabStatus.NOT_RUN -> text.caseNotRun(testCase.name)
             }
         }
 
         private fun formatDuration(durationMillis: Long): String {
             return CphUiText.formatDuration(durationMillis)
         }
-
     }
+
 }
