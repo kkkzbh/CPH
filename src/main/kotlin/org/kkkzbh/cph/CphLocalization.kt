@@ -77,6 +77,12 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     } else {
         "Submit the current C++ file with the active Codeforces problem tab and browser login session."
     }
+    val eapRepositoryTitle = if (zh) "EAP 版本推送" else "EAP Update Channel"
+    val eapRepositorySummary = if (zh) {
+        "订阅 JetBrains Marketplace EAP 仓库，接收 CPH 测试版更新。测试版有新功能，但很可能更不稳定。"
+    } else {
+        "Subscribe to the JetBrains Marketplace EAP repository for CPH test builds. Test builds include new features, but are likely less stable."
+    }
     val classicThemeSummary = if (zh) {
         "沿用当前 CPH 深色界面与状态配色。"
     } else {
@@ -141,6 +147,21 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     }
     val codeforcesDisableTooltip = if (zh) "禁用 Codeforces 远程提交" else "Disable Codeforces remote submit"
     val codeforcesEnableTooltip = if (zh) "启用 Codeforces 远程提交" else "Enable Codeforces remote submit"
+    val eapRepositoryDisableTooltip = if (zh) "取消订阅 EAP 版本推送" else "Unsubscribe from EAP updates"
+    val eapRepositoryEnableTooltip = if (zh) "启用 EAP 版本推送" else "Enable EAP updates"
+    val eapRepositoryEnabledNotification = if (zh) {
+        "已启用 CPH EAP 版本推送。可在插件更新中检查测试版。"
+    } else {
+        "CPH EAP updates are enabled. Check plugin updates to receive test builds."
+    }
+    val eapRepositoryDisabledNotification = if (zh) {
+        "已禁用 CPH EAP 版本推送。"
+    } else {
+        "CPH EAP updates are disabled."
+    }
+    fun eapRepositoryUpdateFailed(message: String): String {
+        return if (zh) "EAP 版本推送设置失败：$message" else "Failed to update EAP repository: $message"
+    }
     val cppFollowTarget = if (zh) "跟随 Target" else "Follow target"
 
     fun submitCurrentFile(displayId: String): String {

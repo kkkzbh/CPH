@@ -19,6 +19,9 @@ val useLocalClion = providers.gradleProperty("useLocalClion")
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
 val marketplaceToken = providers.environmentVariable("JB_MARKETPLACE_TOKEN")
+val marketplaceChannels = providers.gradleProperty("marketplaceChannels")
+    .map { value -> value.split(",").map(String::trim).filter(String::isNotEmpty) }
+    .orElse(emptyList())
 val browserExtensionVersion = providers.gradleProperty("browserExtensionVersion").orElse("1.0.0")
 val browserExtensionDistributionName = "cph-target-runner-browser-${browserExtensionVersion.get()}"
 val aveMujicaThemeVersion = providers.gradleProperty("aveMujicaThemeVersion").orElse(version.toString())
@@ -71,6 +74,7 @@ intellijPlatform {
 
     publishing {
         token = marketplaceToken
+        channels.set(marketplaceChannels)
     }
 
     pluginVerification {

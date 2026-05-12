@@ -4,10 +4,20 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
+      publish_target:
+        description: Marketplace channel to publish when force_publish is enabled
+        required: false
+        default: eap
+        type: choice
+        options:
+          - eap
+          - stable
       force_publish:
-        description: Force publish the current ref to Marketplace Stable
+        description: Force publish the current ref to the selected Marketplace channel
         required: false
         default: false
         type: boolean
@@ -27,6 +37,10 @@ jobs:
       old_version: ${{ steps.version.outputs.old_version }}
       new_version: ${{ steps.version.outputs.new_version }}
       browser_extension_version: ${{ steps.version.outputs.browser_extension_version }}
+      should_publish: ${{ steps.target.outputs.should_publish }}
+      publish_target: ${{ steps.target.outputs.publish_target }}
+      marketplace_channels: ${{ steps.target.outputs.marketplace_channels }}
+      prerelease: ${{ steps.target.outputs.prerelease }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -61,7 +75,7 @@ jobs:
           old_version=""
           version_changed="false"
 
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]] && [[ -n "${BEFORE_SHA:-}" ]] && [[ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]] && [[ "${GITHUB_REF_TYPE}" == "branch" ]] && [[ -n "${BEFORE_SHA:-}" ]] && [[ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
             tmp_file="$(mktemp)"
             if git show "${BEFORE_SHA}:gradle.properties" > "${tmp_file}" 2>/dev/null; then
               old_version="$(extract_property pluginVersion "${tmp_file}")"
@@ -82,8 +96,102 @@ jobs:
           echo "Browser extension version: ${browser_extension_version}"
           echo "Version changed: ${version_changed}"
 
+      - name: Resolve Marketplace publish target
+        id: target
+        shell: bash
+        env:
+          FORCE_PUBLISH: ${{ github.event.inputs.force_publish }}
+          INPUT_TARGET: ${{ github.event.inputs.publish_target }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          VERSION_CHANGED: ${{ steps.version.outputs.version_changed }}
+        run: |
+          set -euo pipefail
+
+          should_publish="false"
+          publish_target="none"
+          marketplace_channels=""
+          prerelease="false"
+
+          is_eap_version() {
+            [[ "$1" =~ -eap\.[0-9]+$ ]]
+          }
+
+          is_prerelease_version() {
+            [[ "$1" =~ -(eap|alpha|beta|rc)(\.|$) ]]
+          }
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "branch" && "${REF_NAME}" == "main" ]]; then
+            if [[ "${VERSION_CHANGED}" == "true" ]]; then
+              if is_eap_version "${NEW_VERSION}"; then
+                should_publish="true"
+                publish_target="eap"
+                marketplace_channels="eap"
+                prerelease="true"
+              elif is_prerelease_version "${NEW_VERSION}"; then
+                echo "::error::Only versions ending in -eap.N can be auto-published to Marketplace EAP from main. Current pluginVersion: ${NEW_VERSION}"
+                exit 1
+              else
+                echo "pluginVersion changed to stable version ${NEW_VERSION}; main push will verify only. Create tag v${NEW_VERSION} to publish stable."
+              fi
+            fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "tag" ]]; then
+            expected_tag="v${NEW_VERSION}"
+            if [[ "${REF_NAME}" != "${expected_tag}" ]]; then
+              echo "::error::Stable tag ${REF_NAME} does not match pluginVersion ${NEW_VERSION}. Expected ${expected_tag}."
+              exit 1
+            fi
+            if is_prerelease_version "${NEW_VERSION}"; then
+              echo "::error::Stable tag publishing requires a stable pluginVersion, got ${NEW_VERSION}."
+              exit 1
+            fi
+            should_publish="true"
+            publish_target="stable"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${FORCE_PUBLISH:-false}" == "true" ]]; then
+            case "${INPUT_TARGET:-eap}" in
+              eap)
+                if ! is_eap_version "${NEW_VERSION}"; then
+                  echo "::error::Manual EAP publishing requires pluginVersion ending in -eap.N, got ${NEW_VERSION}."
+                  exit 1
+                fi
+                should_publish="true"
+                publish_target="eap"
+                marketplace_channels="eap"
+                prerelease="true"
+                ;;
+              stable)
+                expected_tag="v${NEW_VERSION}"
+                if [[ "${REF_TYPE}" != "tag" || "${REF_NAME}" != "${expected_tag}" ]]; then
+                  echo "::error::Manual stable publishing must run on tag ${expected_tag}; current ref is ${REF_TYPE}:${REF_NAME}."
+                  exit 1
+                fi
+                if is_prerelease_version "${NEW_VERSION}"; then
+                  echo "::error::Stable publishing requires a stable pluginVersion, got ${NEW_VERSION}."
+                  exit 1
+                fi
+                should_publish="true"
+                publish_target="stable"
+                ;;
+              *)
+                echo "::error::Unknown publish_target: ${INPUT_TARGET}"
+                exit 1
+                ;;
+            esac
+          fi
+
+          echo "should_publish=${should_publish}" >> "${GITHUB_OUTPUT}"
+          echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
+          echo "marketplace_channels=${marketplace_channels}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+
+          echo "Should publish: ${should_publish}"
+          echo "Publish target: ${publish_target}"
+          echo "Marketplace channels: ${marketplace_channels:-<default>}"
+          echo "GitHub prerelease: ${prerelease}"
+
       - name: Require plugin metadata update on release pushes
-        if: github.event_name == 'push' && steps.version.outputs.version_changed == 'true'
+        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.version.outputs.version_changed == 'true'
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -136,12 +244,13 @@ jobs:
 
   release:
     needs: verify
-    if: needs.verify.result == 'success' && (needs.verify.outputs.version_changed == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_publish == 'true'))
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: v${{ needs.verify.outputs.new_version }}
       PLUGIN_VERSION: ${{ needs.verify.outputs.new_version }}
       BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
     steps:
       - name: Download release assets
         uses: actions/download-artifact@v4
@@ -187,19 +296,30 @@ jobs:
             exit 1
           fi
 
-          gh release create "${RELEASE_TAG}" \
-            "${plugin_asset}" \
-            "${browser_asset}" \
-            "${theme_asset}" \
-            "${theme_manifest}" \
-            --target "${GITHUB_SHA}" \
-            --title "CPH Target Runner ${PLUGIN_VERSION}" \
+          release_args=(
+            "${RELEASE_TAG}"
+            "${plugin_asset}"
+            "${browser_asset}"
+            "${theme_asset}"
+            "${theme_manifest}"
+            --target "${GITHUB_SHA}"
+            --title "CPH Target Runner ${PLUGIN_VERSION}"
             --notes "Automated release for CPH Target Runner ${PLUGIN_VERSION}."
+          )
+
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          gh release create "${release_args[@]}"
 
   publish:
     needs: verify
-    if: needs.verify.result == 'success' && (needs.verify.outputs.version_changed == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_publish == 'true'))
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
+    env:
+      MARKETPLACE_CHANNELS: ${{ needs.verify.outputs.marketplace_channels }}
+      PUBLISH_TARGET: ${{ needs.verify.outputs.publish_target }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -226,7 +346,13 @@ jobs:
             exit 1
           fi
 
-      - name: Publish plugin to Marketplace Stable
+      - name: Publish plugin to Marketplace
         env:
           JB_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
-        run: ./gradlew --stacktrace publishPlugin
+        run: |
+          set -euo pipefail
+          if [[ -n "${MARKETPLACE_CHANNELS}" ]]; then
+            ./gradlew --stacktrace publishPlugin -PmarketplaceChannels="${MARKETPLACE_CHANNELS}"
+          else
+            ./gradlew --stacktrace publishPlugin
+          fi

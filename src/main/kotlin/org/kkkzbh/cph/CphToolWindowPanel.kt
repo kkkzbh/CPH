@@ -235,6 +235,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val utilitySettingsTabButton = JButton("", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
     private val themeSettingsTabButton = JButton("", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
     private val codeforcesPluginToggleButton = JButton()
+    private val eapRepositoryToggleButton = JButton()
     private val classicThemeToggleButton = JButton()
     private val aveMujicaThemeToggleButton = JButton()
     private val scaledIconCache = mutableMapOf<String, Icon>()
@@ -376,6 +377,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         themeSettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.THEMES) }
         languageCombo.addActionListener { selectUiLanguage() }
         codeforcesPluginToggleButton.addActionListener { toggleCodeforcesSubmitPlugin() }
+        eapRepositoryToggleButton.addActionListener { toggleEapRepository() }
         classicThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.CLASSIC) }
         aveMujicaThemeToggleButton.addActionListener { selectPluginTheme(CphThemeId.AVE_MUJICA) }
         resetCasesButton.addActionListener { resetCases() }
@@ -606,6 +608,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             rebuildSettingsGrid()
             refreshSettingsTabButtons()
             refreshCodeforcesPluginUi()
+            refreshEapRepositoryUi()
             refreshThemePluginUi()
             refreshSettingsHelpButton()
             refreshSubmitButtonTooltip()
@@ -1608,6 +1611,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.background = theme.panel
             it.border = EmptyBorder(10, 0, 0, 0)
             it.add(buildCodeforcesSubmitPluginRow())
+            it.add(Box.createVerticalStrut(8))
+            it.add(buildEapRepositoryRow())
             it.add(Box.createVerticalGlue())
         }
         val viewport = JPanel(BorderLayout()).also {
@@ -1701,6 +1706,63 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
+    private fun buildEapRepositoryRow(): JComponent {
+        val text = CphText.current()
+        val icon = JBLabel(scaledResourceIcon("/icons/plugin-eap.png", 54)).also {
+            it.horizontalAlignment = SwingConstants.CENTER
+            it.preferredSize = Dimension(70, 64)
+            it.minimumSize = it.preferredSize
+            it.maximumSize = it.preferredSize
+        }
+        val title = JBLabel(text.eapRepositoryTitle).also {
+            it.foreground = theme.text
+            it.font = it.font.deriveFont(Font.BOLD)
+            it.alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val summary = JBTextArea(text.eapRepositorySummary).also {
+            it.foreground = theme.muted
+            it.background = theme.surface
+            it.isOpaque = false
+            it.isEditable = false
+            it.lineWrap = true
+            it.wrapStyleWord = true
+            it.border = EmptyBorder(0, 0, 0, 0)
+            it.alignmentX = Component.LEFT_ALIGNMENT
+        }
+        val textPanel = JPanel().also {
+            it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
+            it.background = theme.surface
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            it.add(title)
+            it.add(Box.createVerticalStrut(4))
+            it.add(summary)
+        }
+        val left = JPanel(BorderLayout(12, 0)).also {
+            it.background = theme.surface
+            it.add(icon, BorderLayout.WEST)
+            it.add(textPanel, BorderLayout.CENTER)
+        }
+        val right = JPanel(GridBagLayout()).also {
+            it.background = theme.surface
+            it.preferredSize = Dimension(88, 42)
+            it.minimumSize = it.preferredSize
+            it.add(eapRepositoryToggleButton)
+        }
+        return JPanel(BorderLayout(12, 0)).also {
+            it.background = theme.surface
+            it.border = CompoundBorder(
+                MatteBorder(1, 1, 1, 1, theme.border),
+                EmptyBorder(12, 12, 12, 12),
+            )
+            it.alignmentX = Component.LEFT_ALIGNMENT
+            it.add(left, BorderLayout.CENTER)
+            it.add(right, BorderLayout.EAST)
+            val preferred = it.preferredSize
+            it.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
+            refreshEapRepositoryUi()
+        }
+    }
+
     private fun toggleCodeforcesSubmitPlugin() {
         val state = CphPluginSettings.getInstance().state
         state.codeforcesRemoteSubmitEnabled = !state.codeforcesRemoteSubmitEnabled
@@ -1726,6 +1788,48 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         codeforcesPluginToggleButton.isContentAreaFilled = false
         codeforcesPluginToggleButton.isBorderPainted = true
         codeforcesPluginToggleButton.isFocusPainted = false
+    }
+
+    private fun toggleEapRepository() {
+        try {
+            if (CphEapRepositoryService.isEapRepositoryEnabled()) {
+                CphEapRepositoryService.disableEapRepository()
+                showEapRepositoryNotification(CphText.current().eapRepositoryDisabledNotification, NotificationType.INFORMATION)
+            } else {
+                CphEapRepositoryService.enableEapRepository()
+                showEapRepositoryNotification(CphText.current().eapRepositoryEnabledNotification, NotificationType.INFORMATION)
+            }
+        } catch (error: Throwable) {
+            showEapRepositoryNotification(
+                CphText.current().eapRepositoryUpdateFailed(error.message ?: error.javaClass.simpleName),
+                NotificationType.ERROR,
+            )
+        }
+        refreshEapRepositoryUi()
+    }
+
+    private fun refreshEapRepositoryUi() {
+        val enabled = runCatching { CphEapRepositoryService.isEapRepositoryEnabled() }.getOrDefault(false)
+        val text = CphText.current()
+        eapRepositoryToggleButton.text = if (enabled) text.disable else text.enable
+        eapRepositoryToggleButton.toolTipText = if (enabled) {
+            text.eapRepositoryDisableTooltip
+        } else {
+            text.eapRepositoryEnableTooltip
+        }
+        eapRepositoryToggleButton.foreground = if (enabled) theme.bad else theme.good
+        eapRepositoryToggleButton.background = theme.surface
+        eapRepositoryToggleButton.isOpaque = false
+        eapRepositoryToggleButton.isContentAreaFilled = false
+        eapRepositoryToggleButton.isBorderPainted = true
+        eapRepositoryToggleButton.isFocusPainted = false
+    }
+
+    private fun showEapRepositoryNotification(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+            .createNotification(message, type)
+            .notify(project)
     }
 
     private fun buildClassicThemeRow(): JComponent {
