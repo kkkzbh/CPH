@@ -1,4 +1,4 @@
-name: Verify and Publish Plugin
+name: Verify and Publish
 
 on:
   push:
@@ -33,11 +33,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     outputs:
-      version_changed: ${{ steps.version.outputs.version_changed }}
-      old_version: ${{ steps.version.outputs.old_version }}
-      new_version: ${{ steps.version.outputs.new_version }}
-      browser_extension_version: ${{ steps.version.outputs.browser_extension_version }}
-      should_publish: ${{ steps.target.outputs.should_publish }}
+      plugin_version_changed: ${{ steps.versions.outputs.plugin_version_changed }}
+      old_plugin_version: ${{ steps.versions.outputs.old_plugin_version }}
+      plugin_version: ${{ steps.versions.outputs.plugin_version }}
+      browser_extension_version: ${{ steps.versions.outputs.browser_extension_version }}
+      theme_version_changed: ${{ steps.versions.outputs.theme_version_changed }}
+      old_theme_version: ${{ steps.versions.outputs.old_theme_version }}
+      theme_version: ${{ steps.versions.outputs.theme_version }}
+      theme_min_plugin_version: ${{ steps.versions.outputs.theme_min_plugin_version }}
+      should_publish_plugin: ${{ steps.target.outputs.should_publish_plugin }}
+      should_publish_theme: ${{ steps.target.outputs.should_publish_theme }}
       publish_target: ${{ steps.target.outputs.publish_target }}
       marketplace_channels: ${{ steps.target.outputs.marketplace_channels }}
       prerelease: ${{ steps.target.outputs.prerelease }}
@@ -56,8 +61,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Detect plugin version change
-        id: version
+      - name: Detect release inputs
+        id: versions
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -70,46 +75,87 @@ jobs:
             awk -F'=' -v name="${property_name}" '$1 ~ "^[[:space:]]*" name "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "${property_file}"
           }
 
-          new_version="$(extract_property pluginVersion gradle.properties)"
+          plugin_version="$(extract_property pluginVersion gradle.properties)"
           browser_extension_version="$(extract_property browserExtensionVersion gradle.properties)"
-          old_version=""
-          version_changed="false"
+          theme_version="$(extract_property aveMujicaThemeVersion gradle.properties)"
+          theme_min_plugin_version="$(extract_property aveMujicaThemeMinPluginVersion gradle.properties)"
 
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]] && [[ "${GITHUB_REF_TYPE}" == "branch" ]] && [[ -n "${BEFORE_SHA:-}" ]] && [[ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+          if [[ -z "${plugin_version}" ]]; then
+            echo "::error::Missing pluginVersion in gradle.properties."
+            exit 1
+          fi
+          if [[ -z "${theme_version}" ]]; then
+            echo "::error::Missing aveMujicaThemeVersion in gradle.properties."
+            exit 1
+          fi
+          if [[ -z "${theme_min_plugin_version}" ]]; then
+            echo "::error::Missing aveMujicaThemeMinPluginVersion in gradle.properties."
+            exit 1
+          fi
+
+          old_plugin_version=""
+          old_theme_version=""
+          plugin_version_changed="false"
+          theme_version_changed="false"
+          theme_resource_changed="false"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" && -n "${BEFORE_SHA:-}" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
             tmp_file="$(mktemp)"
             if git show "${BEFORE_SHA}:gradle.properties" > "${tmp_file}" 2>/dev/null; then
-              old_version="$(extract_property pluginVersion "${tmp_file}")"
-              if [[ -n "${old_version}" ]] && [[ "${old_version}" != "${new_version}" ]]; then
-                version_changed="true"
+              old_plugin_version="$(extract_property pluginVersion "${tmp_file}")"
+              old_theme_version="$(extract_property aveMujicaThemeVersion "${tmp_file}")"
+              if [[ "${old_plugin_version}" != "${plugin_version}" ]]; then
+                plugin_version_changed="true"
+              fi
+              if [[ "${old_theme_version}" != "${theme_version}" ]]; then
+                theme_version_changed="true"
               fi
             fi
             rm -f "${tmp_file}"
+
+            if git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- \
+              src/main/resources/icons/avemujica \
+              src/main/resources/fonts/AnglicanText.ttf | grep -q .; then
+              theme_resource_changed="true"
+            fi
           fi
 
-          echo "old_version=${old_version}" >> "${GITHUB_OUTPUT}"
-          echo "new_version=${new_version}" >> "${GITHUB_OUTPUT}"
+          echo "old_plugin_version=${old_plugin_version}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_version=${plugin_version}" >> "${GITHUB_OUTPUT}"
+          echo "plugin_version_changed=${plugin_version_changed}" >> "${GITHUB_OUTPUT}"
           echo "browser_extension_version=${browser_extension_version}" >> "${GITHUB_OUTPUT}"
-          echo "version_changed=${version_changed}" >> "${GITHUB_OUTPUT}"
+          echo "old_theme_version=${old_theme_version}" >> "${GITHUB_OUTPUT}"
+          echo "theme_version=${theme_version}" >> "${GITHUB_OUTPUT}"
+          echo "theme_min_plugin_version=${theme_min_plugin_version}" >> "${GITHUB_OUTPUT}"
+          echo "theme_version_changed=${theme_version_changed}" >> "${GITHUB_OUTPUT}"
+          echo "theme_resource_changed=${theme_resource_changed}" >> "${GITHUB_OUTPUT}"
 
-          echo "Old version: ${old_version:-<none>}"
-          echo "New version: ${new_version}"
+          echo "Old plugin version: ${old_plugin_version:-<none>}"
+          echo "Plugin version: ${plugin_version}"
+          echo "Plugin version changed: ${plugin_version_changed}"
           echo "Browser extension version: ${browser_extension_version}"
-          echo "Version changed: ${version_changed}"
+          echo "Old Ave Mujica theme version: ${old_theme_version:-<none>}"
+          echo "Ave Mujica theme version: ${theme_version}"
+          echo "Ave Mujica theme minimum plugin version: ${theme_min_plugin_version}"
+          echo "Ave Mujica theme version changed: ${theme_version_changed}"
+          echo "Ave Mujica theme resources changed: ${theme_resource_changed}"
 
-      - name: Resolve Marketplace publish target
+      - name: Resolve publish targets
         id: target
         shell: bash
         env:
           FORCE_PUBLISH: ${{ github.event.inputs.force_publish }}
           INPUT_TARGET: ${{ github.event.inputs.publish_target }}
-          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          PLUGIN_VERSION: ${{ steps.versions.outputs.plugin_version }}
+          PLUGIN_VERSION_CHANGED: ${{ steps.versions.outputs.plugin_version_changed }}
+          THEME_VERSION_CHANGED: ${{ steps.versions.outputs.theme_version_changed }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
-          VERSION_CHANGED: ${{ steps.version.outputs.version_changed }}
         run: |
           set -euo pipefail
 
-          should_publish="false"
+          should_publish_plugin="false"
+          should_publish_theme="false"
           publish_target="none"
           marketplace_channels=""
           prerelease="false"
@@ -123,54 +169,57 @@ jobs:
           }
 
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "branch" && "${REF_NAME}" == "main" ]]; then
-            if [[ "${VERSION_CHANGED}" == "true" ]]; then
-              if is_eap_version "${NEW_VERSION}"; then
-                should_publish="true"
+            if [[ "${PLUGIN_VERSION_CHANGED}" == "true" ]]; then
+              if is_eap_version "${PLUGIN_VERSION}"; then
+                should_publish_plugin="true"
                 publish_target="eap"
                 marketplace_channels="eap"
                 prerelease="true"
-              elif is_prerelease_version "${NEW_VERSION}"; then
-                echo "::error::Only versions ending in -eap.N can be auto-published to Marketplace EAP from main. Current pluginVersion: ${NEW_VERSION}"
+              elif is_prerelease_version "${PLUGIN_VERSION}"; then
+                echo "::error::Only versions ending in -eap.N can be auto-published to Marketplace EAP from main. Current pluginVersion: ${PLUGIN_VERSION}"
                 exit 1
               else
-                echo "pluginVersion changed to stable version ${NEW_VERSION}; main push will verify only. Create tag v${NEW_VERSION} to publish stable."
+                echo "pluginVersion changed to stable version ${PLUGIN_VERSION}; main push will verify only. Create tag v${PLUGIN_VERSION} to publish stable."
               fi
             fi
+            if [[ "${THEME_VERSION_CHANGED}" == "true" ]]; then
+              should_publish_theme="true"
+            fi
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "tag" ]]; then
-            expected_tag="v${NEW_VERSION}"
+            expected_tag="v${PLUGIN_VERSION}"
             if [[ "${REF_NAME}" != "${expected_tag}" ]]; then
-              echo "::error::Stable tag ${REF_NAME} does not match pluginVersion ${NEW_VERSION}. Expected ${expected_tag}."
+              echo "::error::Stable tag ${REF_NAME} does not match pluginVersion ${PLUGIN_VERSION}. Expected ${expected_tag}."
               exit 1
             fi
-            if is_prerelease_version "${NEW_VERSION}"; then
-              echo "::error::Stable tag publishing requires a stable pluginVersion, got ${NEW_VERSION}."
+            if is_prerelease_version "${PLUGIN_VERSION}"; then
+              echo "::error::Stable tag publishing requires a stable pluginVersion, got ${PLUGIN_VERSION}."
               exit 1
             fi
-            should_publish="true"
+            should_publish_plugin="true"
             publish_target="stable"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${FORCE_PUBLISH:-false}" == "true" ]]; then
             case "${INPUT_TARGET:-eap}" in
               eap)
-                if ! is_eap_version "${NEW_VERSION}"; then
-                  echo "::error::Manual EAP publishing requires pluginVersion ending in -eap.N, got ${NEW_VERSION}."
+                if ! is_eap_version "${PLUGIN_VERSION}"; then
+                  echo "::error::Manual EAP publishing requires pluginVersion ending in -eap.N, got ${PLUGIN_VERSION}."
                   exit 1
                 fi
-                should_publish="true"
+                should_publish_plugin="true"
                 publish_target="eap"
                 marketplace_channels="eap"
                 prerelease="true"
                 ;;
               stable)
-                expected_tag="v${NEW_VERSION}"
+                expected_tag="v${PLUGIN_VERSION}"
                 if [[ "${REF_TYPE}" != "tag" || "${REF_NAME}" != "${expected_tag}" ]]; then
                   echo "::error::Manual stable publishing must run on tag ${expected_tag}; current ref is ${REF_TYPE}:${REF_NAME}."
                   exit 1
                 fi
-                if is_prerelease_version "${NEW_VERSION}"; then
-                  echo "::error::Stable publishing requires a stable pluginVersion, got ${NEW_VERSION}."
+                if is_prerelease_version "${PLUGIN_VERSION}"; then
+                  echo "::error::Stable publishing requires a stable pluginVersion, got ${PLUGIN_VERSION}."
                   exit 1
                 fi
-                should_publish="true"
+                should_publish_plugin="true"
                 publish_target="stable"
                 ;;
               *)
@@ -180,18 +229,20 @@ jobs:
             esac
           fi
 
-          echo "should_publish=${should_publish}" >> "${GITHUB_OUTPUT}"
+          echo "should_publish_plugin=${should_publish_plugin}" >> "${GITHUB_OUTPUT}"
+          echo "should_publish_theme=${should_publish_theme}" >> "${GITHUB_OUTPUT}"
           echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
           echo "marketplace_channels=${marketplace_channels}" >> "${GITHUB_OUTPUT}"
           echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
-          echo "Should publish: ${should_publish}"
-          echo "Publish target: ${publish_target}"
+          echo "Should publish plugin: ${should_publish_plugin}"
+          echo "Should publish Ave Mujica theme: ${should_publish_theme}"
+          echo "Plugin publish target: ${publish_target}"
           echo "Marketplace channels: ${marketplace_channels:-<default>}"
           echo "GitHub prerelease: ${prerelease}"
 
-      - name: Require plugin metadata update on release pushes
-        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.version.outputs.version_changed == 'true'
+      - name: Require plugin metadata update on plugin release pushes
+        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.versions.outputs.plugin_version_changed == 'true'
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -228,37 +279,56 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Run tests and build plugin
-        run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension packageAveMujicaTheme
+      - name: Require theme version bump on theme resource changes
+        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.versions.outputs.theme_resource_changed == 'true' && steps.versions.outputs.theme_version_changed != 'true'
+        run: |
+          echo "::error::Ave Mujica theme resources changed, but aveMujicaThemeVersion was not bumped."
+          exit 1
 
-      - name: Upload release assets
+      - name: Run tests and build plugin
+        run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension
+
+      - name: Build Ave Mujica theme package
+        if: steps.target.outputs.should_publish_theme == 'true'
+        run: ./gradlew --stacktrace packageAveMujicaTheme
+
+      - name: Upload plugin release assets
+        if: steps.target.outputs.should_publish_plugin == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ steps.version.outputs.new_version }}
+          name: plugin-release-assets-${{ steps.versions.outputs.plugin_version }}
           path: |
-            build/distributions/clion-cph-target-runner-${{ steps.version.outputs.new_version }}.zip
-            build/distributions/cph-target-runner-browser-${{ steps.version.outputs.browser_extension_version }}.zip
-            build/distributions/cph-theme-avemujica-${{ steps.version.outputs.new_version }}.zip
+            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.plugin_version }}.zip
+            build/distributions/cph-target-runner-browser-${{ steps.versions.outputs.browser_extension_version }}.zip
+          if-no-files-found: error
+
+      - name: Upload Ave Mujica theme release assets
+        if: steps.target.outputs.should_publish_theme == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: avemujica-theme-assets-${{ steps.versions.outputs.theme_version }}
+          path: |
+            build/distributions/cph-theme-avemujica-${{ steps.versions.outputs.theme_version }}.zip
             build/distributions/cph-theme-avemujica.json
           if-no-files-found: error
 
-  release:
+  release_plugin:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_plugin == 'true'
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: v${{ needs.verify.outputs.new_version }}
-      PLUGIN_VERSION: ${{ needs.verify.outputs.new_version }}
+      RELEASE_TAG: v${{ needs.verify.outputs.plugin_version }}
+      PLUGIN_VERSION: ${{ needs.verify.outputs.plugin_version }}
       BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
       PRERELEASE: ${{ needs.verify.outputs.prerelease }}
     steps:
-      - name: Download release assets
+      - name: Download plugin release assets
         uses: actions/download-artifact@v4
         with:
-          name: release-assets-${{ needs.verify.outputs.new_version }}
+          name: plugin-release-assets-${{ needs.verify.outputs.plugin_version }}
           path: release-assets
 
-      - name: Create GitHub Release
+      - name: Create plugin GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -268,8 +338,6 @@ jobs:
 
           plugin_asset="release-assets/clion-cph-target-runner-${PLUGIN_VERSION}.zip"
           browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
-          theme_asset="release-assets/cph-theme-avemujica-${PLUGIN_VERSION}.zip"
-          theme_manifest="release-assets/cph-theme-avemujica.json"
 
           if [[ ! -f "${plugin_asset}" ]]; then
             echo "::error::Missing plugin release asset: ${plugin_asset}"
@@ -278,16 +346,6 @@ jobs:
 
           if [[ ! -f "${browser_asset}" ]]; then
             echo "::error::Missing browser extension release asset: ${browser_asset}"
-            exit 1
-          fi
-
-          if [[ ! -f "${theme_asset}" ]]; then
-            echo "::error::Missing Ave Mujica theme release asset: ${theme_asset}"
-            exit 1
-          fi
-
-          if [[ ! -f "${theme_manifest}" ]]; then
-            echo "::error::Missing Ave Mujica theme manifest: ${theme_manifest}"
             exit 1
           fi
 
@@ -300,8 +358,6 @@ jobs:
             "${RELEASE_TAG}"
             "${plugin_asset}"
             "${browser_asset}"
-            "${theme_asset}"
-            "${theme_manifest}"
             --target "${GITHUB_SHA}"
             --title "CPH Target Runner ${PLUGIN_VERSION}"
             --notes "Automated release for CPH Target Runner ${PLUGIN_VERSION}."
@@ -313,9 +369,60 @@ jobs:
 
           gh release create "${release_args[@]}"
 
-  publish:
+  release_theme:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_theme == 'true'
+    runs-on: ubuntu-latest
+    env:
+      THEME_RELEASE_TAG: theme-avemujica
+      THEME_VERSION: ${{ needs.verify.outputs.theme_version }}
+    steps:
+      - name: Download Ave Mujica theme release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: avemujica-theme-assets-${{ needs.verify.outputs.theme_version }}
+          path: theme-assets
+
+      - name: Publish Ave Mujica theme release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          theme_asset="theme-assets/cph-theme-avemujica-${THEME_VERSION}.zip"
+          theme_manifest="theme-assets/cph-theme-avemujica.json"
+
+          if [[ ! -f "${theme_asset}" ]]; then
+            echo "::error::Missing Ave Mujica theme asset: ${theme_asset}"
+            exit 1
+          fi
+
+          if [[ ! -f "${theme_manifest}" ]]; then
+            echo "::error::Missing Ave Mujica theme manifest: ${theme_manifest}"
+            exit 1
+          fi
+
+          if ! gh release view "${THEME_RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${THEME_RELEASE_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "Ave Mujica Theme" \
+              --notes "Standalone release channel for Ave Mujica theme assets."
+          fi
+
+          theme_asset_name="$(basename "${theme_asset}")"
+          if gh release view "${THEME_RELEASE_TAG}" --json assets --jq '.assets[].name' | grep -Fxq "${theme_asset_name}"; then
+            echo "::error::Ave Mujica theme asset already exists: ${theme_asset_name}. Bump aveMujicaThemeVersion before publishing."
+            exit 1
+          fi
+
+          gh release upload "${THEME_RELEASE_TAG}" "${theme_asset}"
+          gh release upload "${THEME_RELEASE_TAG}" "${theme_manifest}" --clobber
+
+  publish_plugin:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_plugin == 'true'
     runs-on: ubuntu-latest
     env:
       MARKETPLACE_CHANNELS: ${{ needs.verify.outputs.marketplace_channels }}

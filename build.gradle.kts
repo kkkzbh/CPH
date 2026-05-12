@@ -24,7 +24,9 @@ val marketplaceChannels = providers.gradleProperty("marketplaceChannels")
     .orElse(emptyList())
 val browserExtensionVersion = providers.gradleProperty("browserExtensionVersion").orElse("1.0.0")
 val browserExtensionDistributionName = "cph-target-runner-browser-${browserExtensionVersion.get()}"
-val aveMujicaThemeVersion = providers.gradleProperty("aveMujicaThemeVersion").orElse(version.toString())
+val aveMujicaThemeVersion = providers.gradleProperty("aveMujicaThemeVersion")
+val aveMujicaThemeMinPluginVersion = providers.gradleProperty("aveMujicaThemeMinPluginVersion")
+val aveMujicaThemeReleaseTag = "theme-avemujica"
 val aveMujicaThemeZipName = "cph-theme-avemujica-${aveMujicaThemeVersion.get()}.zip"
 
 kotlin {
@@ -111,7 +113,7 @@ val packageBrowserExtension by tasks.registering(Zip::class) {
 
 val prepareAveMujicaThemePackage by tasks.registering(Sync::class) {
     inputs.property("aveMujicaThemeVersion", aveMujicaThemeVersion)
-    inputs.property("pluginVersion", version)
+    inputs.property("aveMujicaThemeMinPluginVersion", aveMujicaThemeMinPluginVersion)
     from(layout.projectDirectory.dir("src/main/resources")) {
         include("icons/avemujica/**")
         include("fonts/AnglicanText.ttf")
@@ -124,7 +126,7 @@ val prepareAveMujicaThemePackage by tasks.registering(Sync::class) {
             {
               "themeId": "avemujica",
               "version": "${aveMujicaThemeVersion.get()}",
-              "minPluginVersion": "${version}"
+              "minPluginVersion": "${aveMujicaThemeMinPluginVersion.get()}"
             }
             """.trimIndent() + "\n",
         )
@@ -141,7 +143,7 @@ val zipAveMujicaTheme by tasks.registering(Zip::class) {
 val generateAveMujicaThemeManifest by tasks.registering {
     dependsOn(zipAveMujicaTheme)
     inputs.property("aveMujicaThemeVersion", aveMujicaThemeVersion)
-    inputs.property("pluginVersion", version)
+    inputs.property("aveMujicaThemeMinPluginVersion", aveMujicaThemeMinPluginVersion)
     inputs.file(zipAveMujicaTheme.flatMap { it.archiveFile })
     val manifestFile = layout.buildDirectory.file("distributions/cph-theme-avemujica.json")
     outputs.file(manifestFile)
@@ -162,8 +164,8 @@ val generateAveMujicaThemeManifest by tasks.registering {
             {
               "themeId": "avemujica",
               "version": "${aveMujicaThemeVersion.get()}",
-              "minPluginVersion": "${version}",
-              "packageUrl": "https://github.com/kkkzbh/CPH/releases/download/v${version}/${aveMujicaThemeZipName}",
+              "minPluginVersion": "${aveMujicaThemeMinPluginVersion.get()}",
+              "packageUrl": "https://github.com/kkkzbh/CPH/releases/download/${aveMujicaThemeReleaseTag}/${aveMujicaThemeZipName}",
               "sha256": "$sha256",
               "sizeBytes": ${zipFile.length()}
             }

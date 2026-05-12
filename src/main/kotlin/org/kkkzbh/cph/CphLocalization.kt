@@ -147,6 +147,7 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     }
     val codeforcesDisableTooltip = if (zh) "禁用 Codeforces 远程提交" else "Disable Codeforces remote submit"
     val codeforcesEnableTooltip = if (zh) "启用 Codeforces 远程提交" else "Enable Codeforces remote submit"
+    val codeforcesSubmitDocs = if (zh) "打开 Codeforces 远程提交教程" else "Open Codeforces remote submit tutorial"
     val eapRepositoryDisableTooltip = if (zh) "取消订阅 EAP 版本推送" else "Unsubscribe from EAP updates"
     val eapRepositoryEnableTooltip = if (zh) "启用 EAP 版本推送" else "Enable EAP updates"
     val eapRepositoryEnabledNotification = if (zh) {

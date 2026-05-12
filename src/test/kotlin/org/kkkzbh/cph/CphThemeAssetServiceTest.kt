@@ -39,6 +39,16 @@ class CphThemeAssetServiceTest {
     }
 
     @Test
+    fun aveMujicaManifestUrlsUseStandaloneThemeReleaseOnly() {
+        assertEquals(
+            listOf(
+                "https://github.com/kkkzbh/CPH/releases/download/theme-avemujica/cph-theme-avemujica.json",
+            ),
+            CphThemeAssetService.aveMujicaManifestUrls(),
+        )
+    }
+
+    @Test
     fun themePackageInstallsAndResolvesAssets() {
         val state = CphPluginSettingsState()
         val store = CphThemeAssetStore(temp.newFolder("themes").toPath(), state)

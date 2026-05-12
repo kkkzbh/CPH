@@ -10,10 +10,9 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.application.PathManager
+import com.intellij.util.io.HttpRequests
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -355,7 +354,7 @@ internal class CphThemeAssetService {
     fun checkForUpdatesAsync(onDone: () -> Unit = {}) {
         ApplicationManager.getApplication().executeOnPooledThread {
             runCatching {
-                val manifest = fetchManifest(AVE_MUJICA_MANIFEST_URL)
+                val manifest = fetchAveMujicaManifest()
                 synchronized(lock) {
                     remoteManifests[manifest.themeId] = manifest
                     failures.remove(manifest.themeId)
@@ -380,7 +379,7 @@ internal class CphThemeAssetService {
                 indicator.isIndeterminate = true
                 runCatching {
                     val manifest = synchronized(lock) { remoteManifests[CphThemeId.AVE_MUJICA] }
-                        ?: fetchManifest(AVE_MUJICA_MANIFEST_URL).also {
+                        ?: fetchAveMujicaManifest().also {
                             synchronized(lock) { remoteManifests[it.themeId] = it }
                         }
                     if (!isCompatible(manifest)) {
@@ -421,24 +420,35 @@ internal class CphThemeAssetService {
         return CphThemePackageJson.parse(text)
     }
 
+    private fun fetchAveMujicaManifest(): CphThemePackageManifest {
+        val errors = mutableListOf<String>()
+        for (url in aveMujicaManifestUrls()) {
+            val manifest = runCatching { fetchManifest(url) }
+                .onFailure { errors += "${url}: ${it.message ?: it.javaClass.simpleName}" }
+                .getOrNull()
+            if (manifest != null) return manifest
+        }
+        throw IOException("Ave Mujica theme manifest unavailable. ${errors.joinToString("; ")}")
+    }
+
     private fun downloadPackage(manifest: CphThemePackageManifest, indicator: ProgressIndicator): Path {
         val tempDir = defaultThemesRoot().resolve(".downloads")
         tempDir.createDirectories()
         val target = tempDir.resolve("${manifest.themeId}-${manifest.version}-${System.nanoTime()}.zip")
-        val connection = URI(manifest.packageUrl).toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = HTTP_TIMEOUT_MILLIS
-        connection.readTimeout = HTTP_TIMEOUT_MILLIS
-        connection.inputStream.use { input ->
-            target.outputStream().use { output ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var copied = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    copied += read
-                    if (manifest.sizeBytes > 0) {
-                        indicator.fraction = copied.toDouble() / manifest.sizeBytes
+        httpRequest(manifest.packageUrl).connect { request ->
+            request.inputStream.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var copied = 0L
+                    while (true) {
+                        indicator.checkCanceled()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        copied += read
+                        if (manifest.sizeBytes > 0) {
+                            indicator.fraction = copied.toDouble() / manifest.sizeBytes
+                        }
                     }
                 }
             }
@@ -447,15 +457,21 @@ internal class CphThemeAssetService {
     }
 
     private fun readUrl(url: String): String {
-        val connection = URI(url).toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = HTTP_TIMEOUT_MILLIS
-        connection.readTimeout = HTTP_TIMEOUT_MILLIS
-        return connection.inputStream.use { input ->
+        return httpRequest(url).connect { request ->
             val out = ByteArrayOutputStream()
-            input.copyTo(out)
+            request.inputStream.use { input -> input.copyTo(out) }
             out.toString(StandardCharsets.UTF_8)
         }
     }
+
+    private fun httpRequest(url: String) =
+        HttpRequests.request(url)
+            .connectTimeout(HTTP_TIMEOUT_MILLIS)
+            .readTimeout(HTTP_TIMEOUT_MILLIS)
+            .followRedirects(true)
+            .useProxy(true)
+            .productNameAsUserAgent()
+            .throwStatusCodeException(true)
 
     private fun isCompatible(manifest: CphThemePackageManifest): Boolean =
         CphVersionComparator.compare(currentPluginVersion(), manifest.minPluginVersion) >= 0
@@ -475,10 +491,13 @@ internal class CphThemeAssetService {
 
     companion object {
         private const val AVE_MUJICA_MANIFEST_URL =
-            "https://github.com/kkkzbh/CPH/releases/latest/download/cph-theme-avemujica.json"
+            "https://github.com/kkkzbh/CPH/releases/download/theme-avemujica/cph-theme-avemujica.json"
         private const val HTTP_TIMEOUT_MILLIS = 15_000
         private const val CPH_PLUGIN_ID = "org.kkkzbh.cph"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
+
+        fun aveMujicaManifestUrls(): List<String> =
+            listOf(AVE_MUJICA_MANIFEST_URL)
 
         fun getInstance(): CphThemeAssetService =
             ApplicationManager.getApplication().getService(CphThemeAssetService::class.java)

@@ -234,6 +234,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val settingsTabButton = JButton()
     private val utilitySettingsTabButton = JButton("", IconLoader.getIcon("/icons/plugin.svg", CphToolWindowPanel::class.java))
     private val themeSettingsTabButton = JButton("", IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java))
+    private val codeforcesSubmitHelpButton = JButton("?")
     private val codeforcesPluginToggleButton = JButton()
     private val eapRepositoryToggleButton = JButton()
     private val classicThemeToggleButton = JButton()
@@ -361,6 +362,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureDebugSelectedCaseButton()
         configureSubmitButton()
         configureHelpButton()
+        configureTitleActionButton(codeforcesSubmitHelpButton, CODEFORCES_SUBMIT_HELP_BUTTON_WIDTH)
         configureTitleActionButton(inputCopyButton, TITLE_COPY_BUTTON_WIDTH)
         configureTitleActionButton(expectedCopyButton, TITLE_COPY_BUTTON_WIDTH)
         configureTitleActionButton(actualCopyButton, TITLE_COPY_BUTTON_WIDTH)
@@ -372,6 +374,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runAllButton.addActionListener { runAllCases() }
         submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
         helpButton.addActionListener { BrowserUtil.browse(CPH_DOCS_URL) }
+        codeforcesSubmitHelpButton.addActionListener { BrowserUtil.browse(CPH_CODEFORCES_SUBMIT_DOCS_URL) }
         settingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.SETTINGS) }
         utilitySettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.UTILITY) }
         themeSettingsTabButton.addActionListener { showSettingsTab(SettingsPanelTab.THEMES) }
@@ -593,6 +596,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         actualCopyButton.toolTipText = text.copySection(text.standardOutput)
         actualToExpectedButton.toolTipText = text.setActualAsExpectedTooltip
         helpButton.toolTipText = text.cphDocs
+        codeforcesSubmitHelpButton.toolTipText = text.codeforcesSubmitDocs
+        setTitleActionButtonText(codeforcesSubmitHelpButton, "?")
         singleFileModeEnabled.toolTipText = text.singleFileTooltip
         singleFileWorkingDirectoryField.toolTipText = text.workingDirectoryTooltip
         singleFileWorkingDirectoryChooserButton.toolTipText = text.chooseWorkingDirectoryTooltip
@@ -1233,6 +1238,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return icon
     }
 
+    private fun scaledCoreResourceIcon(path: String, size: Int, trimTransparentPadding: Boolean = false): Icon? {
+        val key = "$path@$size@core@trim=$trimTransparentPadding"
+        scaledIconCache[key]?.let { return it }
+        val url = CphToolWindowPanel::class.java.getResource(path) ?: return null
+        val source = ImageIO.read(url) ?: return null
+        val icon = HighQualityPngIcon(source, size, if (trimTransparentPadding) visibleIconSourceRect(source) else null)
+        scaledIconCache[key] = icon
+        return icon
+    }
+
     private fun scaledAspectResourceIcon(path: String, height: Int, trimTransparentPadding: Boolean = false): Icon? {
         val key = "$path@h=$height@painted@trim=$trimTransparentPadding"
         scaledIconCache[key]?.let { return it }
@@ -1532,7 +1547,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun rebuildSettingsGrid() {
         settingsGrid.removeAll()
         val text = CphText.current()
-        settingsGrid.add(settingsSection(text.runSettings, buildSettingsHelpHeaderComponent()) {
+        settingsGrid.add(settingsSection(text.runSettings) {
             settingRow(text.interfaceLanguage, languageCombo)
             settingCheckBoxRow(singleFileModeEnabled)
             settingRow(text.workingDirectory, singleFileWorkingDirectoryControl())
@@ -1565,15 +1580,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         })
         settingsGrid.revalidate()
         settingsGrid.repaint()
-    }
-
-    private fun buildSettingsHelpHeaderComponent(): JComponent {
-        refreshSettingsHelpButton()
-        return JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).also {
-            it.background = theme.panel
-            it.isOpaque = false
-            it.add(helpButton)
-        }
     }
 
     private fun buildSettingsTabStrip(): JComponent {
@@ -1676,7 +1682,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
             it.background = theme.surface
             it.alignmentX = Component.LEFT_ALIGNMENT
-            it.add(title)
+            it.add(JPanel().also { row ->
+                row.layout = BoxLayout(row, BoxLayout.X_AXIS)
+                row.background = theme.surface
+                row.isOpaque = false
+                row.alignmentX = Component.LEFT_ALIGNMENT
+                row.add(title)
+                row.add(Box.createHorizontalStrut(6))
+                row.add(codeforcesSubmitHelpButton)
+                row.add(Box.createHorizontalGlue())
+            })
             it.add(Box.createVerticalStrut(4))
             it.add(summary)
         }
@@ -1702,6 +1717,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             it.add(right, BorderLayout.EAST)
             val preferred = it.preferredSize
             it.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
+            refreshTitleActionButton(codeforcesSubmitHelpButton)
             refreshCodeforcesPluginUi()
         }
     }
@@ -1846,6 +1862,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             palette = CphThemes.aveMujica,
             summary = CphText.current().aveMujicaThemeSummary,
             icon = scaledResourceIcon("/icons/avemujica/generated/512/theme/normal.png", aveMujicaIconSize(46))
+                ?: scaledCoreResourceIcon(
+                    AVE_MUJICA_THEME_PREVIEW_RESOURCE,
+                    aveMujicaIconSize(46),
+                    trimTransparentPadding = true,
+                )
                 ?: IconLoader.getIcon("/icons/cphToolWindow.svg", CphToolWindowPanel::class.java),
             titleIcon = scaledAspectResourceIcon(
                 AVE_MUJICA_THEME_TITLE_RESOURCE,
@@ -3623,7 +3644,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshThemePluginUi()
         refreshSubmitFeatureVisibility()
         refreshRunActionButtons()
-        listOf(inputCopyButton, expectedCopyButton, actualCopyButton, actualToExpectedButton).forEach(::refreshTitleActionButton)
+        listOf(
+            codeforcesSubmitHelpButton,
+            inputCopyButton,
+            expectedCopyButton,
+            actualCopyButton,
+            actualToExpectedButton,
+        ).forEach(::refreshTitleActionButton)
     }
 
     private inner class CaseTab(
@@ -4279,6 +4306,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val TITLE_ACTION_BUTTON_HEIGHT = 18
         private const val TITLE_ACTION_HORIZONTAL_PADDING = 8
         private const val TITLE_ACTION_VERTICAL_PADDING = 1
+        private const val CODEFORCES_SUBMIT_HELP_BUTTON_WIDTH = 22
         private const val TITLE_ACTION_FEEDBACK_VISIBLE_MILLIS = 1100
         private const val TAB_STRIP_BASE_HEIGHT = 62
         private const val AVE_MUJICA_TAB_STRIP_BASE_HEIGHT = 66
@@ -4303,12 +4331,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private val RUN_SPINNER_FRAMES = arrayOf("○", "◔", "◑", "◕")
         private const val RUN_ALL_BUTTON_TEXT = "▷"
         private const val CPH_DOCS_URL = "https://cph.kkkzbh.cn"
+        private const val CPH_CODEFORCES_SUBMIT_DOCS_URL = "https://cph.kkkzbh.cn/#/codeforces-submit"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
         private const val AVE_MUJICA_FONT_RESOURCE = "/fonts/AnglicanText.ttf"
         private const val AVE_MUJICA_HELP_TEXT_RESOURCE = "/icons/avemujica/standalone/help_text.png"
         private const val AVE_MUJICA_HELP_TEXT_HEIGHT = 28
         private const val AVE_MUJICA_HELP_ICON_TEXT_GAP = 7
         private const val AVE_MUJICA_THEME_TITLE_RESOURCE = "/icons/avemujica/standalone/theme_title.png"
+        private const val AVE_MUJICA_THEME_PREVIEW_RESOURCE = "/icons/aveMujicaThemePreview.png"
         private const val AVE_MUJICA_THEME_TITLE_HEIGHT = 32
         private const val AVE_MUJICA_ANIMATION_DELAY_MILLIS = 70
         private const val AVE_MUJICA_ANIMATION_FRAME_COUNT = 8
