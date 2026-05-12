@@ -28,6 +28,7 @@
         <projectService serviceImplementation="org.kkkzbh.cph.CphShortcutDispatcher" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphSingleFileModeService" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphPluginSettings" />
+        <applicationService serviceImplementation="org.kkkzbh.cph.CphThemeAssetService" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphImportSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.server.CphCompetitiveCompanionServer" />

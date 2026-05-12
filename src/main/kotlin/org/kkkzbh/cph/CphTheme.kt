@@ -106,7 +106,14 @@ internal object CphThemes {
     val all = listOf(classic, aveMujica)
 
     fun current(): CphThemePalette {
-        return palette(CphPluginSettings.getInstance().state.selectedThemeId)
+        val selectedThemeId = CphPluginSettings.getInstance().state.selectedThemeId
+        if (selectedThemeId == CphThemeId.AVE_MUJICA) {
+            val installed = runCatching {
+                CphThemeAssetService.getInstance().isThemeInstalled(CphThemeId.AVE_MUJICA)
+            }.getOrDefault(false)
+            if (!installed) return classic
+        }
+        return palette(selectedThemeId)
     }
 
     fun palette(themeId: String?): CphThemePalette {

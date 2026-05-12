@@ -121,7 +121,7 @@ jobs:
           PY
 
       - name: Run tests and build plugin
-        run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension
+        run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension packageAveMujicaTheme
 
       - name: Upload release assets
         uses: actions/upload-artifact@v4
@@ -130,6 +130,8 @@ jobs:
           path: |
             build/distributions/clion-cph-target-runner-${{ steps.version.outputs.new_version }}.zip
             build/distributions/cph-target-runner-browser-${{ steps.version.outputs.browser_extension_version }}.zip
+            build/distributions/cph-theme-avemujica-${{ steps.version.outputs.new_version }}.zip
+            build/distributions/cph-theme-avemujica.json
           if-no-files-found: error
 
   release:
@@ -157,6 +159,8 @@ jobs:
 
           plugin_asset="release-assets/clion-cph-target-runner-${PLUGIN_VERSION}.zip"
           browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
+          theme_asset="release-assets/cph-theme-avemujica-${PLUGIN_VERSION}.zip"
+          theme_manifest="release-assets/cph-theme-avemujica.json"
 
           if [[ ! -f "${plugin_asset}" ]]; then
             echo "::error::Missing plugin release asset: ${plugin_asset}"
@@ -168,6 +172,16 @@ jobs:
             exit 1
           fi
 
+          if [[ ! -f "${theme_asset}" ]]; then
+            echo "::error::Missing Ave Mujica theme release asset: ${theme_asset}"
+            exit 1
+          fi
+
+          if [[ ! -f "${theme_manifest}" ]]; then
+            echo "::error::Missing Ave Mujica theme manifest: ${theme_manifest}"
+            exit 1
+          fi
+
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "::error::GitHub Release ${RELEASE_TAG} already exists. Bump pluginVersion before publishing a new release."
             exit 1
@@ -176,6 +190,8 @@ jobs:
           gh release create "${RELEASE_TAG}" \
             "${plugin_asset}" \
             "${browser_asset}" \
+            "${theme_asset}" \
+            "${theme_manifest}" \
             --target "${GITHUB_SHA}" \
             --title "CPH Target Runner ${PLUGIN_VERSION}" \
             --notes "Automated release for CPH Target Runner ${PLUGIN_VERSION}."

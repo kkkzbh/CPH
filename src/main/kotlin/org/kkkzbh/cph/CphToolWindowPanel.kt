@@ -205,6 +205,7 @@ internal object CphStatusMapper {
 
 class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val stateService = CphStateService.getInstance(project)
+    private val themeAssetService = CphThemeAssetService.getInstance()
     private val theme: CphThemePalette
         get() = CphThemes.current()
     private var currentIdentity = CphTargetResolver.current(project)
@@ -226,7 +227,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
     private val caseTabComponents = linkedMapOf<String, CaseTab>()
 
-    private val settingsButton = JButton("⚙")
     private val runAllButton = JButton(RUN_ALL_BUTTON_TEXT)
     private val submitButton = JButton("📤")
     private val helpButton = JButton("?")
@@ -247,7 +247,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var aveMujicaStatusGlyphAnimationStartedNanos = 0L
     private var aveMujicaLineHighlightFrameOffset = 0.0
     private var aveMujicaStatusGlyphFrameOffset = 0.0
-    private val aveMujicaFont: Font? by lazy { loadAveMujicaFont() }
+    private var aveMujicaFontLoaded = false
+    private var aveMujicaFontCache: Font? = null
+    private val aveMujicaFont: Font?
+        get() {
+            if (!aveMujicaFontLoaded) {
+                aveMujicaFontCache = loadAveMujicaFont()
+                aveMujicaFontLoaded = true
+            }
+            return aveMujicaFontCache
+        }
     private val verdictLabel = JBLabel("")
     private var verdictPageUrl: String? = null
     private var submitBusy = false
@@ -314,7 +323,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val contentCards = JPanel(CardLayout())
     private val settingsContentCards = JPanel(CardLayout())
     private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
-    private val settingsReturnHintPanel = JPanel(BorderLayout())
+    private val settingsView = JPanel(BorderLayout())
     private var topView: JComponent? = null
     private val outputContainer = JPanel(BorderLayout())
     private val inputArea = JBTextArea()
@@ -338,6 +347,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
         background = theme.panel
         refreshLocalizedTexts(rebuildSettings = false)
+        rebuildSettingsView()
         val builtTop = buildTop()
         topView = builtTop
         add(builtTop, BorderLayout.NORTH)
@@ -348,7 +358,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureResetCasesButton()
         configureRunSelectedCaseButton()
         configureDebugSelectedCaseButton()
-        configureSettingsButton()
         configureSubmitButton()
         configureHelpButton()
         configureTitleActionButton(inputCopyButton, TITLE_COPY_BUTTON_WIDTH)
@@ -358,7 +367,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         configureVerdictLabel()
         configureWorkingDirectoryChooserButton()
 
-        settingsButton.addActionListener { toggleSettingsPanel() }
         enableCphButton.addActionListener { enableCphForProject() }
         runAllButton.addActionListener { runAllCases() }
         submitButton.addActionListener { CphSubmitOrchestrator.getInstance(project).submit() }
@@ -470,6 +478,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshCodeforcesPluginUi()
         refreshSubmitFeatureVisibility()
         refreshSubmitButtonTooltip()
+        checkAveMujicaThemeUpdates()
     }
 
     override fun dispose() {
@@ -499,6 +508,23 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             }
         }
     }
+
+    fun showMainView() {
+        settingsVisible = false
+        showActiveView()
+    }
+
+    fun showSettingsView() {
+        settingsVisible = true
+        showActiveView()
+    }
+
+    fun toggleSettingsView() {
+        settingsVisible = !settingsVisible
+        showActiveView()
+    }
+
+    fun isSettingsViewVisible(): Boolean = settingsVisible
 
     private fun triggerShortcutAction(button: JButton, action: () -> Unit) {
         playThemedIconAnimation(button)
@@ -564,7 +590,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         expectedCopyButton.toolTipText = text.copySection(text.expectedOutput)
         actualCopyButton.toolTipText = text.copySection(text.standardOutput)
         actualToExpectedButton.toolTipText = text.setActualAsExpectedTooltip
-        settingsButton.toolTipText = if (settingsVisible) text.hideSettings else text.settings
         helpButton.toolTipText = text.cphDocs
         singleFileModeEnabled.toolTipText = text.singleFileTooltip
         singleFileWorkingDirectoryField.toolTipText = text.workingDirectoryTooltip
@@ -602,7 +627,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val rightActions = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 4)).also {
             it.background = theme.panel
             it.add(resetCasesButton)
-            it.add(settingsButton)
         }
         toolbar.add(leftActions, BorderLayout.WEST)
         toolbar.add(rightActions, BorderLayout.EAST)
@@ -790,7 +814,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         CphCodeforcesSubmitFeature.isEnabled()
 
     private fun loadAveMujicaFont(): Font? {
-        val stream = CphToolWindowPanel::class.java.getResourceAsStream(AVE_MUJICA_FONT_RESOURCE) ?: return null
+        val stream = themeResourceStream(AVE_MUJICA_FONT_RESOURCE) ?: return null
         return stream.use {
             Font.createFont(Font.TRUETYPE_FONT, it).also { font ->
                 GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(font)
@@ -891,10 +915,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         button.isContentAreaFilled = highlighted
         button.border = EmptyBorder(2, 7, 2, 7)
         button.repaint()
-    }
-
-    private fun configureSettingsButton() {
-        configureToolbarIconButton(settingsButton, { if (settingsVisible) theme.run else theme.text }, fontDelta = 1.0f)
     }
 
     private fun configureHelpButton() {
@@ -1032,7 +1052,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             runAllButton -> setThemeButtonFace(button, "run_all", pressed, RUN_ALL_BUTTON_TEXT, null, toolbarIconSize())
             submitButton -> setThemeButtonFace(button, "upload", pressed, "📤", null, toolbarIconSize())
             resetCasesButton -> setThemeButtonFace(button, "reset_rerun", pressed, "↺", null, toolbarIconSize())
-            settingsButton -> setThemeButtonFace(button, "settings", pressed || settingsVisible, "⚙", null, toolbarIconSize())
         }
     }
 
@@ -1108,7 +1127,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun hasThemedAnimation(iconName: String): Boolean {
         val key = "animation:$iconName"
         generatedIconPresenceCache[key]?.let { return it }
-        val hasAnimation = CphToolWindowPanel::class.java.getResource(
+        val hasAnimation = themeResourceUrl(
             "/icons/avemujica/generated/512/$iconName/pressed_01.png",
         ) != null
         generatedIconPresenceCache[key] = hasAnimation
@@ -1182,7 +1201,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             runAllButton -> refreshToolbarRunAllButton()
             submitButton -> refreshToolbarIconButton(submitButton, theme.run)
             resetCasesButton -> refreshToolbarIconButton(resetCasesButton, theme.text)
-            settingsButton -> refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
             helpButton -> refreshSettingsHelpButton()
             runSelectedCaseButton -> refreshRunActionButton(
                 runSelectedCaseButton,
@@ -1205,7 +1223,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun scaledResourceIcon(path: String, size: Int, trimTransparentPadding: Boolean = false): Icon? {
         val key = "$path@$size@painted@trim=$trimTransparentPadding"
         scaledIconCache[key]?.let { return it }
-        val url = CphToolWindowPanel::class.java.getResource(path) ?: return null
+        val url = themeResourceUrl(path) ?: return null
         val source = ImageIO.read(url) ?: return null
         val icon = HighQualityPngIcon(source, size, if (trimTransparentPadding) visibleIconSourceRect(source) else null)
         scaledIconCache[key] = icon
@@ -1215,7 +1233,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun scaledAspectResourceIcon(path: String, height: Int, trimTransparentPadding: Boolean = false): Icon? {
         val key = "$path@h=$height@painted@trim=$trimTransparentPadding"
         scaledIconCache[key]?.let { return it }
-        val url = CphToolWindowPanel::class.java.getResource(path) ?: return null
+        val url = themeResourceUrl(path) ?: return null
         val source = ImageIO.read(url) ?: return null
         val sourceRect = if (trimTransparentPadding) visibleContentSourceRect(source) else null
         val width = ((sourceRect?.width ?: source.width).toDouble() / (sourceRect?.height ?: source.height) * height)
@@ -1224,6 +1242,28 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val icon = HighQualityPngIcon(source, width, height, sourceRect)
         scaledIconCache[key] = icon
         return icon
+    }
+
+    private fun themeResourceUrl(path: String): java.net.URL? {
+        val relativePath = path.removePrefix("/")
+        if (relativePath.startsWith("icons/avemujica/") || relativePath == "fonts/AnglicanText.ttf") {
+            return themeAssetService.resolve(CphThemeId.AVE_MUJICA, relativePath)
+        }
+        return CphToolWindowPanel::class.java.getResource(path)
+    }
+
+    private fun themeResourceStream(path: String) =
+        themeResourceUrl(path)?.openStream()
+
+    private fun clearAveMujicaResourceCaches() {
+        scaledIconCache.keys.removeIf {
+            it.startsWith("/icons/avemujica/") || it.startsWith("/fonts/AnglicanText.ttf")
+        }
+        generatedIconPresenceCache.clear()
+        aveMujicaStatusGlyphCache.clear()
+        aveMujicaLineHighlightTile = null
+        aveMujicaFontLoaded = false
+        aveMujicaFontCache = null
     }
 
     private fun visibleIconSourceRect(image: BufferedImage): Rectangle? {
@@ -1355,7 +1395,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         contentCards.background = theme.panel
         contentCards.add(buildOnboardingView(), ONBOARDING_VIEW_CARD)
         contentCards.add(buildMainView(), MAIN_VIEW_CARD)
-        contentCards.add(buildSettingsView(), SETTINGS_VIEW_CARD)
+        contentCards.add(settingsView, SETTINGS_VIEW_CARD)
         showActiveView()
         return contentCards
     }
@@ -1435,7 +1475,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return if (theme.id == CphThemeId.AVE_MUJICA) AVE_MUJICA_TAB_STRIP_BASE_HEIGHT else TAB_STRIP_BASE_HEIGHT
     }
 
-    private fun buildSettingsView(): JComponent {
+    private fun rebuildSettingsView() {
+        settingsView.removeAll()
+        settingsView.background = theme.panel
         settingsContentCards.background = theme.panel
         settingsContentCards.add(buildSettingsFormView(), SettingsPanelTab.SETTINGS.cardName)
         settingsContentCards.add(buildPluginUtilityView(), SettingsPanelTab.UTILITY.cardName)
@@ -1443,11 +1485,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         showCurrentSettingsTabCard()
         val tabStrip = buildSettingsTabStrip()
         refreshSettingsTabButtons()
-        return JPanel(BorderLayout()).also {
-            it.background = theme.panel
-            it.add(tabStrip, BorderLayout.NORTH)
-            it.add(settingsContentCards, BorderLayout.CENTER)
-        }
+        settingsView.add(tabStrip, BorderLayout.NORTH)
+        settingsView.add(settingsContentCards, BorderLayout.CENTER)
+        settingsView.revalidate()
+        settingsView.repaint()
     }
 
     private fun buildSettingsFormView(): JComponent {
@@ -1790,6 +1831,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun selectPluginTheme(themeId: String) {
         if (running) return
         val normalizedThemeId = CphThemeId.normalize(themeId)
+        if (normalizedThemeId == CphThemeId.AVE_MUJICA) {
+            handleAveMujicaThemeAction()
+            return
+        }
         val state = CphPluginSettings.getInstance().state
         if (state.selectedThemeId == normalizedThemeId) {
             refreshThemePluginUi()
@@ -1799,22 +1844,137 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         rebuildThemedLayout()
     }
 
+    private fun handleAveMujicaThemeAction() {
+        when (themeAssetService.state(CphThemeId.AVE_MUJICA).status) {
+            CphThemePackageStatus.NOT_INSTALLED,
+            CphThemePackageStatus.UPDATE_AVAILABLE,
+            CphThemePackageStatus.FAILED -> installOrUpdateAveMujicaTheme()
+
+            CphThemePackageStatus.INCOMPATIBLE -> {
+                showThemeNotification(
+                    themeAssetService.state(CphThemeId.AVE_MUJICA).message
+                        ?: CphText.current().aveMujicaThemeNotInstalled,
+                    NotificationType.WARNING,
+                )
+                refreshThemePluginUi()
+            }
+
+            CphThemePackageStatus.DOWNLOADING -> refreshThemePluginUi()
+
+            CphThemePackageStatus.INSTALLED -> {
+                val state = CphPluginSettings.getInstance().state
+                if (state.selectedThemeId != CphThemeId.AVE_MUJICA) {
+                    state.selectedThemeId = CphThemeId.AVE_MUJICA
+                    clearAveMujicaResourceCaches()
+                    rebuildThemedLayout()
+                } else {
+                    refreshThemePluginUi()
+                }
+            }
+        }
+    }
+
+    private fun installOrUpdateAveMujicaTheme() {
+        themeAssetService.installOrUpdateAveMujica(project) { installed ->
+            clearAveMujicaResourceCaches()
+            if (installed) {
+                CphPluginSettings.getInstance().state.selectedThemeId = CphThemeId.AVE_MUJICA
+                rebuildThemedLayout()
+            } else {
+                refreshThemePluginUi()
+            }
+        }
+        refreshThemePluginUi()
+    }
+
+    private fun checkAveMujicaThemeUpdates() {
+        themeAssetService.checkForUpdatesAsync {
+            refreshThemePluginUi()
+            if (activeSettingsTab == SettingsPanelTab.THEMES) {
+                rebuildSettingsGrid()
+            }
+        }
+    }
+
+    private fun showThemeNotification(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+            .createNotification(message, type)
+            .notify(project)
+    }
+
     private fun refreshThemePluginUi() {
         val selectedThemeId = CphThemeId.normalize(CphPluginSettings.getInstance().state.selectedThemeId)
         val classicSelected = selectedThemeId == CphThemeId.CLASSIC
-        val aveMujicaSelected = selectedThemeId == CphThemeId.AVE_MUJICA
+        val aveMujicaState = themeAssetService.state(CphThemeId.AVE_MUJICA)
+        val aveMujicaSelected = selectedThemeId == CphThemeId.AVE_MUJICA && aveMujicaState.installed
         refreshThemeToggleButton(
             classicThemeToggleButton,
-            classicSelected,
+            classicSelected || selectedThemeId == CphThemeId.AVE_MUJICA && !aveMujicaState.installed,
             CphText.current().defaultThemeEnabled,
             CphText.current().enableDefaultTheme,
         )
-        refreshThemeToggleButton(
+        refreshAveMujicaThemeToggleButton(
             aveMujicaThemeToggleButton,
             aveMujicaSelected,
-            CphText.current().aveMujicaThemeEnabled,
-            CphText.current().enableAveMujicaTheme,
+            aveMujicaState,
         )
+    }
+
+    private fun refreshAveMujicaThemeToggleButton(
+        button: JButton,
+        selected: Boolean,
+        packageState: CphThemePackageState,
+    ) {
+        val text = CphText.current()
+        when (packageState.status) {
+            CphThemePackageStatus.NOT_INSTALLED -> {
+                button.text = text.install
+                button.toolTipText = text.aveMujicaThemeNotInstalled
+                button.foreground = theme.good
+                button.isEnabled = !running
+            }
+
+            CphThemePackageStatus.UPDATE_AVAILABLE -> {
+                button.text = text.update
+                button.toolTipText = text.aveMujicaThemeUpdateAvailable
+                button.foreground = theme.warn
+                button.isEnabled = !running
+            }
+
+            CphThemePackageStatus.FAILED -> {
+                button.text = text.retry
+                button.toolTipText = packageState.message ?: text.aveMujicaThemeNotInstalled
+                button.foreground = theme.bad
+                button.isEnabled = !running
+            }
+
+            CphThemePackageStatus.DOWNLOADING -> {
+                button.text = text.installing
+                button.toolTipText = text.installingAveMujicaTheme
+                button.foreground = theme.muted
+                button.isEnabled = false
+            }
+
+            CphThemePackageStatus.INCOMPATIBLE -> {
+                button.text = text.update
+                button.toolTipText = packageState.message ?: text.aveMujicaThemeUpdateAvailable
+                button.foreground = theme.muted
+                button.isEnabled = false
+            }
+
+            CphThemePackageStatus.INSTALLED -> {
+                button.text = if (selected) text.enabled else text.enable
+                button.toolTipText = if (selected) text.aveMujicaThemeEnabled else text.enableAveMujicaTheme
+                button.foreground = if (selected) theme.run else theme.good
+                button.isEnabled = !running && !selected
+            }
+        }
+        button.background = theme.surface
+        button.isOpaque = false
+        button.isContentAreaFilled = false
+        button.isBorderPainted = true
+        button.isFocusPainted = false
     }
 
     private fun refreshThemeToggleButton(
@@ -1844,6 +2004,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         contentCards.removeAll()
         settingsContentCards.removeAll()
         tabStrip.removeAll()
+        rebuildSettingsView()
         removeAll()
         add(buildTop(), BorderLayout.NORTH)
         add(buildCenter(), BorderLayout.CENTER)
@@ -1869,38 +2030,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         flushSelectedCase()
         refreshLocalizedTexts(rebuildSettings = false)
         rebuildThemedLayout()
-    }
-
-    private fun buildSettingsReturnHint(): JComponent {
-        settingsReturnHintPanel.removeAll()
-        settingsReturnHintPanel.background = theme.surface
-        settingsReturnHintPanel.border = CompoundBorder(
-            MatteBorder(1, 1, 1, 1, theme.border),
-            EmptyBorder(8, 10, 8, 10),
-        )
-        settingsReturnHintPanel.alignmentX = Component.LEFT_ALIGNMENT
-        settingsReturnHintPanel.isVisible = false
-        settingsReturnHintPanel.add(
-            JBLabel(CphText.current().settingsReturnHint).also {
-                it.foreground = theme.text
-            },
-            BorderLayout.CENTER,
-        )
-        val preferred = settingsReturnHintPanel.preferredSize
-        settingsReturnHintPanel.maximumSize = Dimension(Int.MAX_VALUE, preferred.height)
-        return settingsReturnHintPanel
-    }
-
-    private fun toggleSettingsPanel() {
-        settingsVisible = !settingsVisible
-        if (settingsVisible) {
-            activeSettingsTab = SettingsPanelTab.SETTINGS
-            showCurrentSettingsTabCard()
-            showSettingsReturnHintOnce()
-        } else {
-            settingsReturnHintPanel.isVisible = false
-        }
-        showActiveView()
     }
 
     private fun showSettingsTab(tab: SettingsPanelTab) {
@@ -1950,25 +2079,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         button.repaint()
     }
 
-    private fun showSettingsReturnHintOnce() {
-        val uiState = stateService.getState().ui
-        val shouldShow = !uiState.settingsReturnHintShown
-        settingsReturnHintPanel.isVisible = shouldShow
-        if (shouldShow) {
-            uiState.settingsReturnHintShown = true
-        }
-    }
-
     private fun showActiveView() {
         val card = when {
-            !isCphEnabled() -> ONBOARDING_VIEW_CARD
             settingsVisible -> SETTINGS_VIEW_CARD
+            !isCphEnabled() -> ONBOARDING_VIEW_CARD
             else -> MAIN_VIEW_CARD
         }
-        topView?.isVisible = isCphEnabled()
+        topView?.isVisible = isCphEnabled() && !settingsVisible
         (contentCards.layout as? CardLayout)?.show(contentCards, card)
-        settingsButton.toolTipText = if (settingsVisible) CphText.current().hideSettings else CphText.current().settings
-        refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
         refreshSettingsHelpButton()
         refreshSettingsTabButtons()
         refreshThemePluginUi()
@@ -3164,7 +3282,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun lineHighlightTile(): BufferedImage? {
         if (theme.id != CphThemeId.AVE_MUJICA) return null
         aveMujicaLineHighlightTile?.let { return it }
-        val url = CphToolWindowPanel::class.java.getResource(AVE_MUJICA_LINE_HIGHLIGHT_TILE) ?: return null
+        val url = themeResourceUrl(AVE_MUJICA_LINE_HIGHLIGHT_TILE) ?: return null
         return ImageIO.read(url)?.also { aveMujicaLineHighlightTile = it }
     }
 
@@ -3311,7 +3429,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             return aveMujicaStatusGlyphCache[glyphName]
         }
         val path = "/icons/avemujica/status/512/$glyphName.png"
-        val image = CphToolWindowPanel::class.java.getResource(path)?.let { ImageIO.read(it) }
+        val image = themeResourceUrl(path)?.let { ImageIO.read(it) }
         aveMujicaStatusGlyphCache[glyphName] = image
         return image
     }
@@ -3374,7 +3492,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val runSelectedActive = activeRunButton == ActiveRunButton.RUN_SELECTED
         val codeforcesSubmitEnabled = isCodeforcesSubmitPluginEnabled()
         val hasSelectedCase = selectedCase != null
-        settingsButton.isEnabled = !running
         runSelectedCaseButton.isEnabled = (hasSelectedCase && runnable) || runSelectedActive
         debugSelectedCaseButton.isEnabled = hasSelectedCase && !running &&
             currentIdentity.runnable &&
@@ -3396,7 +3513,6 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         compileOptionsField.isEnabled = !running
         singleFileWorkingDirectoryField.isEnabled = !running
         singleFileWorkingDirectoryChooserButton.isEnabled = !running
-        refreshToolbarIconButton(settingsButton, if (settingsVisible) theme.run else theme.text)
         refreshToolbarIconButton(resetCasesButton, theme.text)
         refreshSettingsHelpButton()
         refreshSettingsTabButtons()

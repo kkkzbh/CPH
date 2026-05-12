@@ -116,6 +116,22 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     val enableDefaultTheme = if (zh) "启用默认主题" else "Enable default theme"
     val aveMujicaThemeEnabled = if (zh) "Ave Mujica 主题已启用" else "Ave Mujica theme is enabled"
     val enableAveMujicaTheme = if (zh) "启用 Ave Mujica 主题" else "Enable Ave Mujica theme"
+    val install = if (zh) "安装" else "Install"
+    val update = if (zh) "更新" else "Update"
+    val retry = if (zh) "重试" else "Retry"
+    val installing = if (zh) "安装中..." else "Installing..."
+    val aveMujicaThemeNotInstalled = if (zh) {
+        "首次使用需要下载 Ave Mujica 主题资源"
+    } else {
+        "Download the Ave Mujica theme assets before first use"
+    }
+    val aveMujicaThemeUpdateAvailable = if (zh) {
+        "Ave Mujica 主题资源有可用更新"
+    } else {
+        "Ave Mujica theme assets have an update"
+    }
+    val installingAveMujicaTheme = if (zh) "安装 Ave Mujica 主题资源" else "Installing Ave Mujica theme assets"
+    val aveMujicaThemeInstalled = if (zh) "Ave Mujica 主题资源已安装" else "Ave Mujica theme assets installed"
     val submitDisabledSingleFile = if (zh) "提交 Codeforces 前需启用纯单文件模式" else "Enable pure single-file mode before submitting to Codeforces"
     val activeTabNotCodeforces = if (zh) "活动标签页不是 Codeforces 题面" else "Active tab is not a Codeforces problem page"
     val noActiveCodeforcesTab = if (zh) {
@@ -154,6 +170,10 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
             CphThemeId.AVE_MUJICA -> "Ave Mujica"
             else -> defaultThemeName
         }
+    }
+
+    fun aveMujicaThemeInstallFailed(message: String): String {
+        return if (zh) "Ave Mujica 主题资源安装失败：$message" else "Failed to install Ave Mujica theme assets: $message"
     }
 
     fun caseRunning(name: String): String = if (zh) "$name：运行中" else "$name: running"

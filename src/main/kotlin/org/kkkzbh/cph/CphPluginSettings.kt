@@ -10,6 +10,8 @@ internal data class CphPluginSettingsState(
     var codeforcesRemoteSubmitEnabled: Boolean = false,
     var selectedThemeId: String = CphThemeId.CLASSIC,
     var uiLanguage: String = CphUiLanguage.ZH_CN.id,
+    var installedThemeVersions: MutableMap<String, String> = linkedMapOf(),
+    var themeUpdateCheckedAtMillis: Long = 0L,
 )
 
 internal interface CphPluginSettingsChangedListener {

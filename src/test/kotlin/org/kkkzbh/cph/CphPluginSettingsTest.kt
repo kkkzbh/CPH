@@ -2,7 +2,6 @@ package org.kkkzbh.cph
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.awt.Color
@@ -15,6 +14,8 @@ class CphPluginSettingsTest {
         assertFalse(service.state.codeforcesRemoteSubmitEnabled)
         assertEquals(CphThemeId.CLASSIC, service.state.selectedThemeId)
         assertEquals(CphUiLanguage.ZH_CN.id, service.state.uiLanguage)
+        assertTrue(service.state.installedThemeVersions.isEmpty())
+        assertEquals(0L, service.state.themeUpdateCheckedAtMillis)
     }
 
     @Test
@@ -143,30 +144,6 @@ class CphPluginSettingsTest {
         assertEquals(Color(0x36315E), palette.actionPressed)
         assertEquals(Color(0x2A2A1E), palette.diff)
         assertEquals(Color(0xD9B566), palette.warn)
-    }
-
-    @Test
-    fun aveMujicaStatusGlyphResourcesLoad() {
-        listOf("ac", "ok", "wa", "tle", "re", "err", "run").forEach { glyph ->
-            assertNotNull(
-                "missing Ave Mujica status glyph: $glyph",
-                CphPluginSettingsTest::class.java.getResource("/icons/avemujica/status/512/$glyph.png"),
-            )
-        }
-    }
-
-    @Test
-    fun aveMujicaHelpTextResourceLoads() {
-        assertNotNull(
-            CphPluginSettingsTest::class.java.getResource("/icons/avemujica/standalone/help_text.png"),
-        )
-    }
-
-    @Test
-    fun aveMujicaThemeTitleResourceLoads() {
-        assertNotNull(
-            CphPluginSettingsTest::class.java.getResource("/icons/avemujica/standalone/theme_title.png"),
-        )
     }
 
     @Test
