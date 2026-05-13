@@ -11,6 +11,7 @@
           <li>Decouple Ave Mujica theme releases from plugin releases, with a standalone theme update channel.</li>
           <li>Improve theme installation by using the IDE proxy-aware downloader and a built-in Ave Mujica preview icon.</li>
           <li>Add quick help entry points for CPH docs and Codeforces remote submit setup.</li>
+          <li>Correct the release line to 1.1.4 for the stable plugin and matching theme package.</li>
         </ul>
     ]]></change-notes>
 
