@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+extract_property() {
+  local property_name="$1"
+  local source="$2"
+  awk -F'=' -v name="${property_name}" \
+    '$1 ~ "^[[:space:]]*" name "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' \
+    "${source}"
+}
+
+blob_to_temp_file() {
+  local ref="$1"
+  local path="$2"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  if git show "${ref}:${path}" >"${tmp_file}" 2>/dev/null; then
+    printf '%s\n' "${tmp_file}"
+  else
+    rm -f "${tmp_file}"
+    return 1
+  fi
+}
+
+check_plugin_whats_new() {
+  local base_sha="$1"
+  local head_sha="$2"
+
+  local old_props new_props
+  old_props="$(blob_to_temp_file "${base_sha}" "gradle.properties")" || return 0
+  new_props="$(blob_to_temp_file "${head_sha}" "gradle.properties")" || {
+    rm -f "${old_props}"
+    return 0
+  }
+
+  local old_version new_version
+  old_version="$(extract_property pluginVersion "${old_props}")"
+  new_version="$(extract_property pluginVersion "${new_props}")"
+  rm -f "${old_props}" "${new_props}"
+
+  if [[ -z "${old_version}" || -z "${new_version}" || "${old_version}" == "${new_version}" ]]; then
+    return 0
+  fi
+
+  if git diff --name-only "${base_sha}" "${head_sha}" -- src/main/resources/META-INF/plugin.xml | grep -Fxq "src/main/resources/META-INF/plugin.xml"; then
+    return 0
+  fi
+
+  cat >&2 <<EOF
+CPH release guard blocked this push.
+
+pluginVersion changed: ${old_version} -> ${new_version}
+You must update JetBrains Marketplace What's New before pushing:
+  src/main/resources/META-INF/plugin.xml <change-notes>
+
+EOF
+  return 1
+}
+
+zero_sha="0000000000000000000000000000000000000000"
+failed=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "${local_sha}" == "${zero_sha}" ]] && continue
+  [[ "${remote_sha}" == "${zero_sha}" ]] && continue
+  check_plugin_whats_new "${remote_sha}" "${local_sha}" || failed=1
+done
+
+exit "${failed}"
