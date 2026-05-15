@@ -21,7 +21,7 @@ val clionLocalPath = providers.gradleProperty("clionLocalPath")
 val marketplaceToken = providers.environmentVariable("JB_MARKETPLACE_TOKEN")
 val marketplaceChannels = providers.gradleProperty("marketplaceChannels")
     .map { value -> value.split(",").map(String::trim).filter(String::isNotEmpty) }
-    .orElse(emptyList())
+    .orElse(listOf("default"))
 val browserExtensionVersion = providers.gradleProperty("browserExtensionVersion").orElse("1.0.0")
 val browserExtensionDistributionName = "cph-target-runner-browser-${browserExtensionVersion.get()}"
 val aveMujicaThemeVersion = providers.gradleProperty("aveMujicaThemeVersion")

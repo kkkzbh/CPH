@@ -43,6 +43,7 @@ jobs:
       theme_min_plugin_version: ${{ steps.versions.outputs.theme_min_plugin_version }}
       should_publish_plugin: ${{ steps.target.outputs.should_publish_plugin }}
       should_publish_theme: ${{ steps.target.outputs.should_publish_theme }}
+      should_release_plugin: ${{ steps.target.outputs.should_release_plugin }}
       publish_target: ${{ steps.target.outputs.publish_target }}
       marketplace_channels: ${{ steps.target.outputs.marketplace_channels }}
       prerelease: ${{ steps.target.outputs.prerelease }}
@@ -149,6 +150,7 @@ jobs:
           PLUGIN_VERSION: ${{ steps.versions.outputs.plugin_version }}
           PLUGIN_VERSION_CHANGED: ${{ steps.versions.outputs.plugin_version_changed }}
           THEME_VERSION_CHANGED: ${{ steps.versions.outputs.theme_version_changed }}
+          THEME_RESOURCE_CHANGED: ${{ steps.versions.outputs.theme_resource_changed }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
@@ -156,6 +158,7 @@ jobs:
 
           should_publish_plugin="false"
           should_publish_theme="false"
+          should_release_plugin="false"
           publish_target="none"
           marketplace_channels=""
           prerelease="false"
@@ -172,6 +175,7 @@ jobs:
             if [[ "${PLUGIN_VERSION_CHANGED}" == "true" ]]; then
               if is_eap_version "${PLUGIN_VERSION}"; then
                 should_publish_plugin="true"
+                should_release_plugin="true"
                 publish_target="eap"
                 marketplace_channels="eap"
                 prerelease="true"
@@ -182,8 +186,10 @@ jobs:
                 echo "pluginVersion changed to stable version ${PLUGIN_VERSION}; main push will verify only. Create tag v${PLUGIN_VERSION} to publish stable."
               fi
             fi
-            if [[ "${THEME_VERSION_CHANGED}" == "true" ]]; then
+            if [[ "${THEME_VERSION_CHANGED}" == "true" && "${THEME_RESOURCE_CHANGED}" == "true" ]]; then
               should_publish_theme="true"
+            elif [[ "${THEME_VERSION_CHANGED}" == "true" ]]; then
+              echo "Ave Mujica theme version changed without theme resource changes; theme publish will be skipped."
             fi
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "tag" ]]; then
             expected_tag="v${PLUGIN_VERSION}"
@@ -196,6 +202,7 @@ jobs:
               exit 1
             fi
             should_publish_plugin="true"
+            should_release_plugin="true"
             publish_target="stable"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${FORCE_PUBLISH:-false}" == "true" ]]; then
             case "${INPUT_TARGET:-eap}" in
@@ -210,17 +217,18 @@ jobs:
                 prerelease="true"
                 ;;
               stable)
-                expected_tag="v${PLUGIN_VERSION}"
-                if [[ "${REF_TYPE}" != "tag" || "${REF_NAME}" != "${expected_tag}" ]]; then
-                  echo "::error::Manual stable publishing must run on tag ${expected_tag}; current ref is ${REF_TYPE}:${REF_NAME}."
-                  exit 1
-                fi
                 if is_prerelease_version "${PLUGIN_VERSION}"; then
                   echo "::error::Stable publishing requires a stable pluginVersion, got ${PLUGIN_VERSION}."
                   exit 1
                 fi
                 should_publish_plugin="true"
                 publish_target="stable"
+                expected_tag="v${PLUGIN_VERSION}"
+                if [[ "${REF_TYPE}" == "tag" && "${REF_NAME}" == "${expected_tag}" ]]; then
+                  should_release_plugin="true"
+                else
+                  echo "Manual stable Marketplace publish from ${REF_TYPE}:${REF_NAME}; GitHub Release creation will be skipped."
+                fi
                 ;;
               *)
                 echo "::error::Unknown publish_target: ${INPUT_TARGET}"
@@ -231,12 +239,14 @@ jobs:
 
           echo "should_publish_plugin=${should_publish_plugin}" >> "${GITHUB_OUTPUT}"
           echo "should_publish_theme=${should_publish_theme}" >> "${GITHUB_OUTPUT}"
+          echo "should_release_plugin=${should_release_plugin}" >> "${GITHUB_OUTPUT}"
           echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
           echo "marketplace_channels=${marketplace_channels}" >> "${GITHUB_OUTPUT}"
           echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
           echo "Should publish plugin: ${should_publish_plugin}"
           echo "Should publish Ave Mujica theme: ${should_publish_theme}"
+          echo "Should create plugin GitHub Release: ${should_release_plugin}"
           echo "Plugin publish target: ${publish_target}"
           echo "Marketplace channels: ${marketplace_channels:-<default>}"
           echo "GitHub prerelease: ${prerelease}"
@@ -314,7 +324,7 @@ jobs:
 
   release_plugin:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_plugin == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.should_release_plugin == 'true'
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: v${{ needs.verify.outputs.plugin_version }}
@@ -427,6 +437,7 @@ jobs:
     env:
       MARKETPLACE_CHANNELS: ${{ needs.verify.outputs.marketplace_channels }}
       PUBLISH_TARGET: ${{ needs.verify.outputs.publish_target }}
+      PLUGIN_VERSION: ${{ needs.verify.outputs.plugin_version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -459,7 +470,34 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${MARKETPLACE_CHANNELS}" ]]; then
-            ./gradlew --stacktrace publishPlugin -PmarketplaceChannels="${MARKETPLACE_CHANNELS}"
+            ./gradlew --stacktrace --info publishPlugin -PmarketplaceChannels="${MARKETPLACE_CHANNELS}"
           else
-            ./gradlew --stacktrace publishPlugin
+            ./gradlew --stacktrace --info publishPlugin
           fi
+
+      - name: Verify Marketplace visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          channel="${MARKETPLACE_CHANNELS:-default}"
+          if [[ "${channel}" == "default" ]]; then
+            url="https://plugins.jetbrains.com/api/plugins/31535/updates?version=${PLUGIN_VERSION}"
+            jq_filter='.[] | select(.version == env.PLUGIN_VERSION and (.channel == "" or .channel == null))'
+          else
+            url="https://plugins.jetbrains.com/api/plugins/31535/updates?channel=${channel}"
+            jq_filter='.[] | select(.version == env.PLUGIN_VERSION and .channel == env.CHANNEL)'
+          fi
+
+          for attempt in {1..12}; do
+            response="$(curl --fail --silent --show-error --location "${url}")"
+            if CHANNEL="${channel}" PLUGIN_VERSION="${PLUGIN_VERSION}" jq -e "${jq_filter}" >/dev/null <<<"${response}"; then
+              echo "Marketplace ${channel} channel exposes CPH ${PLUGIN_VERSION}."
+              exit 0
+            fi
+            echo "Marketplace ${channel} channel does not expose CPH ${PLUGIN_VERSION} yet; retry ${attempt}/12."
+            sleep 10
+          done
+
+          echo "::error::Marketplace ${channel} channel does not expose CPH ${PLUGIN_VERSION} after publishing."
+          exit 1
