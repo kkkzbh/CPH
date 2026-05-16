@@ -95,6 +95,33 @@ class CphPluginSettingsTest {
     }
 
     @Test
+    fun buildFeatureChannelControlsExperimentalSurface() {
+        val experimentalEnabled = CphBuildFeatures.releaseChannel == "eap"
+
+        assertEquals(experimentalEnabled, CphBuildFeatures.isEap)
+        assertEquals(experimentalEnabled, CphBuildFeatures.utilitySettingsEnabled)
+        assertEquals(experimentalEnabled, CphBuildFeatures.themeSettingsEnabled)
+        assertEquals(experimentalEnabled, CphBuildFeatures.codeforcesSubmitEnabled)
+        assertEquals(experimentalEnabled, CphBuildFeatures.aveMujicaThemeEnabled)
+        assertEquals(false, CphBuildFeatures.localDiagnosticsEnabled)
+    }
+
+    @Test
+    fun stableBuildIgnoresPersistedAveMujicaThemeSelection() {
+        val effectiveThemeId = CphThemes.effectiveThemeId(
+            selectedThemeId = CphThemeId.AVE_MUJICA,
+            aveMujicaInstalled = true,
+        )
+
+        val expected = if (CphBuildFeatures.aveMujicaThemeEnabled) {
+            CphThemeId.AVE_MUJICA
+        } else {
+            CphThemeId.CLASSIC
+        }
+        assertEquals(expected, effectiveThemeId)
+    }
+
+    @Test
     fun themeRegistryContainsClassicAndAveMujica() {
         assertEquals(listOf(CphThemes.classic, CphThemes.aveMujica), CphThemes.all)
     }
@@ -160,7 +187,8 @@ class CphPluginSettingsTest {
                 singleFileModeEnabled = false,
             ),
         )
-        assertTrue(
+        assertEquals(
+            CphBuildFeatures.codeforcesSubmitEnabled,
             CphCodeforcesSubmitFeature.actionEnabled(
                 pluginEnabled = true,
                 singleFileModeEnabled = true,

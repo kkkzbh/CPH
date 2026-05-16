@@ -8,10 +8,10 @@
     ]]></description>
     <change-notes><![CDATA[
         <ul>
-          <li>Decouple Ave Mujica theme releases from plugin releases, with a standalone theme update channel.</li>
-          <li>Improve theme installation by using the IDE proxy-aware downloader and a built-in Ave Mujica preview icon.</li>
-          <li>Add quick help entry points for CPH docs and Codeforces remote submit setup.</li>
-          <li>Correct the release line to 1.1.4 for the stable plugin and matching theme package.</li>
+          <li>Add GCC bits/stdc++.h PCH acceleration for CLion C/C++ File configurations.</li>
+          <li>Resolve compilers through CLion toolchains and cache header probes to keep repeated runs fast.</li>
+          <li>Add local compile diagnostics for measuring PCH, CLion build, and CPH cache behavior.</li>
+          <li>Improve C/C++ File build recovery and sample-run process handling.</li>
         </ul>
     ]]></change-notes>
 
@@ -27,6 +27,8 @@
         <projectService serviceImplementation="org.kkkzbh.cph.CphCppFileBuildCache" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphShortcutDispatcher" />
         <projectService serviceImplementation="org.kkkzbh.cph.CphSingleFileModeService" />
+        <projectService serviceImplementation="org.kkkzbh.cph.CphGccPchService" />
+        <projectService serviceImplementation="org.kkkzbh.cph.CphBuildOutputService" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphPluginSettings" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphThemeAssetService" />
         <applicationService serviceImplementation="org.kkkzbh.cph.CphShortcutSettings" />

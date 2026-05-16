@@ -76,12 +76,22 @@ internal sealed class CphPreparedRunTarget {
     ) : CphPreparedRunTarget()
 }
 
+internal data class CphRunPrepareDiagnostics(
+    val buildMillis: Long = 0L,
+    val buildSkippedByCphCache: Boolean = false,
+    val commandLineResolveMillis: Long = 0L,
+    val totalPrepareMillis: Long = 0L,
+)
+
 internal fun copyCphCommandLine(source: GeneralCommandLine): GeneralCommandLine = CphCommandLineCopy(source)
 
 private class CphCommandLineCopy(source: GeneralCommandLine) : GeneralCommandLine(source)
 
 internal sealed class CphRunPreparation {
-    data class Ready(val target: CphPreparedRunTarget) : CphRunPreparation()
+    data class Ready(
+        val target: CphPreparedRunTarget,
+        val diagnostics: CphRunPrepareDiagnostics = CphRunPrepareDiagnostics(),
+    ) : CphRunPreparation()
     data class Failed(val result: CphCaseResult) : CphRunPreparation()
 }
 
@@ -219,6 +229,7 @@ internal class CphRunner(
                     executable = executable,
                     workingDir = File(project.basePath ?: executable.parentFile.absolutePath),
                 ),
+                CphRunPrepareDiagnostics(totalPrepareMillis = elapsedMillis(setupStartedAt)),
             )
         } catch (e: Exception) {
             CphRunPreparation.Failed(
@@ -238,7 +249,8 @@ internal class CphRunner(
         return try {
             val context = buildDefaultRunContext(settings)
             val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
-            if (buildResult != null) return CphRunPreparation.Failed(buildResult)
+            if (buildResult.error != null) return CphRunPreparation.Failed(buildResult.error)
+            val commandLineStartedAt = System.nanoTime()
             val commandLine = when (val resolution = resolveCppFileCommandLineRecovering(
                 settings = settings,
                 executor = context.executor,
@@ -248,7 +260,16 @@ internal class CphRunner(
                 is CppFileCommandLineResolution.Ready -> resolution.commandLine
                 is CppFileCommandLineResolution.Failed -> return CphRunPreparation.Failed(resolution.result)
             }
-            CphRunPreparation.Ready(CphPreparedRunTarget.CppFile(commandLine))
+            val commandLineResolveMillis = elapsedMillis(commandLineStartedAt)
+            CphRunPreparation.Ready(
+                CphPreparedRunTarget.CppFile(commandLine),
+                CphRunPrepareDiagnostics(
+                    buildMillis = buildResult.elapsedMillis,
+                    buildSkippedByCphCache = buildResult.skippedByCphCache,
+                    commandLineResolveMillis = commandLineResolveMillis,
+                    totalPrepareMillis = elapsedMillis(setupStartedAt),
+                ),
+            )
         } catch (e: Exception) {
             CphRunPreparation.Failed(
                 CphCaseResult(
@@ -271,7 +292,7 @@ internal class CphRunner(
         return try {
             val context = buildDefaultRunContext(settings)
             val buildResult = buildCppFileTarget(settings, context.environment, setupStartedAt)
-            if (buildResult != null) return buildResult
+            if (buildResult.error != null) return buildResult.error
 
             val commandLine = when (val resolution = resolveCppFileCommandLineRecovering(
                 settings = settings,
@@ -531,7 +552,7 @@ internal class CphRunner(
         environment: ExecutionEnvironment,
         startedAt: Long,
         force: Boolean = false,
-    ): CphCaseResult? {
+    ): CphCppFileBuildResult {
         synchronized(cppFileBuildLock) {
             return buildCppFileTargetLocked(settings, environment, startedAt, force)
         }
@@ -542,38 +563,59 @@ internal class CphRunner(
         environment: ExecutionEnvironment,
         startedAt: Long,
         force: Boolean,
-    ): CphCaseResult? {
+    ): CphCppFileBuildResult {
+        val buildStartedAt = System.nanoTime()
         return try {
             val buildKey = cppFileBuildKey(settings)
-            if (!force && isCppFileBuildFresh(settings, environment, buildKey)) return null
+            if (!force && isCppFileBuildFresh(settings, environment, buildKey)) {
+                return CphCppFileBuildResult(
+                    skippedByCphCache = true,
+                    elapsedMillis = elapsedMillis(buildStartedAt),
+                )
+            }
             val ok = executeCppFileBuildTask(settings, environment)
             if (ok) {
                 markCppFileBuildFresh(settings, environment, buildKey)
-                null
+                CphCppFileBuildResult(elapsedMillis = elapsedMillis(buildStartedAt))
             } else {
-                CphCaseResult(
-                    verdict = CphVerdict.ERROR,
-                    durationMillis = elapsedMillis(startedAt),
-                    message = "Build failed for C/C++ File configuration '${settings.name}'.",
+                CphCppFileBuildResult(
+                    error = CphCaseResult(
+                        verdict = CphVerdict.ERROR,
+                        durationMillis = elapsedMillis(startedAt),
+                        message = "Build failed for C/C++ File configuration '${settings.name}'.",
+                    ),
+                    elapsedMillis = elapsedMillis(buildStartedAt),
                 )
             }
         } catch (e: Throwable) {
             val cause = invocationCause(e)
             if (isCppFileTargetMiss(cause)) {
                 val diagnostics = CphCompileSettingsSynchronizer(project).diagnoseCppFileWorkspace(settings)
-                return CphCaseResult(
-                    verdict = CphVerdict.ERROR,
-                    durationMillis = elapsedMillis(startedAt),
-                    message = "Build failed for C/C++ File configuration '${settings.name}' because CLion has no matching single-file build target. $diagnostics",
+                return CphCppFileBuildResult(
+                    error = CphCaseResult(
+                        verdict = CphVerdict.ERROR,
+                        durationMillis = elapsedMillis(startedAt),
+                        message = "Build failed for C/C++ File configuration '${settings.name}' because CLion has no matching single-file build target. $diagnostics",
+                    ),
+                    elapsedMillis = elapsedMillis(buildStartedAt),
                 )
             }
-            CphCaseResult(
-                verdict = CphVerdict.ERROR,
-                durationMillis = elapsedMillis(startedAt),
-                message = "Build failed for C/C++ File configuration '${settings.name}': ${cause.message ?: cause.javaClass.simpleName}",
+            CphCppFileBuildResult(
+                error = CphCaseResult(
+                    verdict = CphVerdict.ERROR,
+                    durationMillis = elapsedMillis(startedAt),
+                    message = "Build failed for C/C++ File configuration '${settings.name}': ${cause.message ?: cause.javaClass.simpleName}",
+                ),
+                elapsedMillis = elapsedMillis(buildStartedAt),
             )
         }
     }
+
+    private data class CphCppFileBuildResult(
+        val error: CphCaseResult? = null,
+        val skippedByCphCache: Boolean = false,
+        val elapsedMillis: Long = 0L,
+    )
 
     private fun executeCppFileBuildTask(
         settings: com.intellij.execution.RunnerAndConfigurationSettings,
@@ -648,7 +690,7 @@ internal class CphRunner(
                 log.warn("CPH C/C++ File target refresh failed before retry for '${settings.name}': ${refresh.error}")
             }
             val rebuildResult = buildCppFileTarget(settings, environment, startedAt, force = true)
-            if (rebuildResult != null) return CppFileCommandLineResolution.Failed(rebuildResult)
+            if (rebuildResult.error != null) return CppFileCommandLineResolution.Failed(rebuildResult.error)
 
             CppFileCommandLineResolution.Ready(resolveCppFileCommandLine(settings, executor, environment))
         }

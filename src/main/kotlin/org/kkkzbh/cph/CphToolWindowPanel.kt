@@ -106,8 +106,20 @@ internal object CphUiText {
     }
 
     fun errorStatusMessage(caseName: String, result: CphCaseResult): String {
-        val code = if (isCompileLikeError(result)) "CE" else "ERR"
+        val code = errorStatusCode(result)
         return "CPH: $caseName $code - ${errorSummary(result)}"
+    }
+
+    fun errorStatusCode(result: CphCaseResult): String {
+        return if (isCompileLikeError(result)) "CE" else "ERR"
+    }
+
+    fun isCompileLikeError(result: CphCaseResult): Boolean {
+        if (result.verdict != CphVerdict.ERROR) return false
+        val text = listOf(result.message, result.stderr, result.actualOutput)
+            .joinToString("\n")
+            .lowercase()
+        return COMPILE_ERROR_MARKERS.any { it in text }
     }
 
     fun errorNotificationContent(caseName: String, result: CphCaseResult): String {
@@ -144,13 +156,6 @@ internal object CphUiText {
             .orEmpty()
     }
 
-    private fun isCompileLikeError(result: CphCaseResult): Boolean {
-        val text = listOf(result.message, result.stderr, result.actualOutput)
-            .joinToString("\n")
-            .lowercase()
-        return COMPILE_ERROR_MARKERS.any { it in text }
-    }
-
     private val COMPILE_ERROR_MARKERS = listOf(
         "build failed",
         "build timed out",
@@ -166,10 +171,16 @@ internal enum class CphRunDisplayStatus {
     WA,
     TLE,
     RE,
+    CE,
     ERROR,
 }
 
 internal object CphStatusMapper {
+    fun displayStatus(result: CphCaseResult, noExpectedMode: Boolean): CphRunDisplayStatus {
+        if (CphUiText.isCompileLikeError(result)) return CphRunDisplayStatus.CE
+        return displayStatus(result.verdict, noExpectedMode)
+    }
+
     fun displayStatus(verdict: CphVerdict, noExpectedMode: Boolean): CphRunDisplayStatus {
         return if (noExpectedMode) {
             when (verdict) {
@@ -287,7 +298,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val ignoreTrailingWhitespace = JCheckBox()
     private val outputSplitEnabled = JCheckBox()
     private val noExpectedModeEnabled = JCheckBox()
+    private val showStderrEnabled = JCheckBox()
     private val confidentSubmitEnabled = JCheckBox()
+    private val parallelCaseRunEnabled = JCheckBox()
+    private val parallelCaseRunHelp = JBLabel("?")
+    private val gccBitsPchEnabled = JCheckBox()
+    private val gccBitsPchHelp = JBLabel("?")
     private val languageCombo = JComboBox(CphUiLanguage.entries.toTypedArray())
     private val cppStandardCombo = JComboBox(CphCppStandard.entries.toTypedArray())
     private val compileOptionsField = JBTextField()
@@ -322,6 +338,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val tabStrip = JPanel()
     private val tabScrollPane = JBScrollPane(tabStrip)
     private val submissionStatusPanel = JPanel(BorderLayout())
+    private val compileDiagnosticsPanel = JPanel(BorderLayout())
+    private val compileDiagnosticsLabel = JBLabel("")
     private val contentCards = JPanel(CardLayout())
     private val settingsContentCards = JPanel(CardLayout())
     private val settingsGrid = JPanel().also { it.layout = BoxLayout(it, BoxLayout.Y_AXIS) }
@@ -331,6 +349,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val inputArea = JBTextArea()
     private val expectedArea = JBTextArea()
     private val actualArea = JBTextArea()
+    private val stderrArea = JBTextArea()
     private val aveMujicaLineHighlightTimer = Timer(AVE_MUJICA_FLOW_ANIMATION_DELAY_MILLIS) {
         aveMujicaLineHighlightFrameOffset = animationOffset(
             startedNanos = aveMujicaLineHighlightAnimationStartedNanos,
@@ -419,9 +438,26 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             stateService.getState().ui.outputSplitEnabled = outputSplitEnabled.isSelected
             rebuildOutputLayout()
         }
+        showStderrEnabled.addActionListener {
+            if (!applyingTargetSettings) {
+                stateService.getState().ui.showStderrEnabled = showStderrEnabled.isSelected
+                rebuildOutputLayout()
+            }
+        }
         confidentSubmitEnabled.addActionListener {
             if (!applyingTargetSettings) {
                 stateService.getState().ui.confidentSubmitEnabled = confidentSubmitEnabled.isSelected
+            }
+        }
+        parallelCaseRunEnabled.addActionListener {
+            if (!applyingTargetSettings) {
+                stateService.getState().ui.parallelCaseRunEnabled = parallelCaseRunEnabled.isSelected
+            }
+        }
+        gccBitsPchEnabled.addActionListener {
+            if (!applyingTargetSettings) {
+                stateService.getState().compileSettings.gccBitsPchEnabled = gccBitsPchEnabled.isSelected
+                syncCompileSettingsForCurrentTarget(reportStatus = true)
             }
         }
         noExpectedModeEnabled.addActionListener {
@@ -466,8 +502,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
         actualArea.isEditable = false
-        listOf(inputArea, expectedArea, actualArea).forEach(::configureEditor)
-        listOf(inputArea, expectedArea, actualArea).forEach(::installEditorFontWheel)
+        stderrArea.isEditable = false
+        listOf(inputArea, expectedArea, actualArea, stderrArea).forEach(::configureEditor)
+        listOf(inputArea, expectedArea, actualArea, stderrArea).forEach(::installEditorFontWheel)
         listOf(expectedArea, actualArea).forEach(::installDiffRefreshListener)
 
         installTargetRefreshListeners()
@@ -483,7 +520,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         refreshCodeforcesPluginUi()
         refreshSubmitFeatureVisibility()
         refreshSubmitButtonTooltip()
-        checkAveMujicaThemeUpdates()
+        if (CphBuildFeatures.aveMujicaThemeEnabled) {
+            checkAveMujicaThemeUpdates()
+        }
     }
 
     override fun dispose() {
@@ -580,7 +619,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         ignoreTrailingWhitespace.text = text.ignoreTrailingWhitespace
         outputSplitEnabled.text = text.outputSplit
         noExpectedModeEnabled.text = text.noExpectedMode
+        showStderrEnabled.text = text.showStderr
         confidentSubmitEnabled.text = text.confidentSubmit
+        parallelCaseRunEnabled.text = text.parallelCaseRun
+        parallelCaseRunEnabled.toolTipText = text.parallelCaseRunTooltip
+        parallelCaseRunHelp.toolTipText = text.parallelCaseRunTooltip
+        gccBitsPchEnabled.text = text.gccBitsPch
+        gccBitsPchEnabled.toolTipText = text.gccBitsPchTooltip
+        gccBitsPchHelp.toolTipText = text.gccBitsPchTooltip
         runSelectedCaseButton.text = runSelectedButtonText()
         debugSelectedCaseButton.text = text.debug
         setTitleActionButtonText(inputCopyButton, text.copy)
@@ -650,7 +696,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         submissionStatusPanel.maximumSize = Dimension(Int.MAX_VALUE, 28)
         submissionStatusPanel.alignmentX = Component.LEFT_ALIGNMENT
 
+        compileDiagnosticsPanel.background = theme.surface
+        compileDiagnosticsPanel.border = CompoundBorder(
+            MatteBorder(1, 0, 1, 0, theme.run),
+            EmptyBorder(4, 8, 4, 8),
+        )
+        compileDiagnosticsLabel.foreground = theme.run
+        compileDiagnosticsPanel.add(compileDiagnosticsLabel, BorderLayout.CENTER)
+        compileDiagnosticsPanel.isVisible = false
+        compileDiagnosticsPanel.maximumSize = Dimension(Int.MAX_VALUE, 28)
+        compileDiagnosticsPanel.alignmentX = Component.LEFT_ALIGNMENT
+
         top.add(toolbar)
+        if (CphBuildFeatures.localDiagnosticsEnabled) {
+            top.add(compileDiagnosticsPanel)
+        }
         top.add(submissionStatusPanel)
         return top
     }
@@ -1494,16 +1554,23 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun rebuildSettingsView() {
+        activeSettingsTab = normalizeSettingsTab(activeSettingsTab)
         settingsView.removeAll()
         settingsView.background = theme.panel
         settingsContentCards.background = theme.panel
+        settingsContentCards.removeAll()
         settingsContentCards.add(buildSettingsFormView(), SettingsPanelTab.SETTINGS.cardName)
-        settingsContentCards.add(buildPluginUtilityView(), SettingsPanelTab.UTILITY.cardName)
-        settingsContentCards.add(buildPluginThemesView(), SettingsPanelTab.THEMES.cardName)
+        if (CphBuildFeatures.utilitySettingsEnabled) {
+            settingsContentCards.add(buildPluginUtilityView(), SettingsPanelTab.UTILITY.cardName)
+        }
+        if (CphBuildFeatures.themeSettingsEnabled) {
+            settingsContentCards.add(buildPluginThemesView(), SettingsPanelTab.THEMES.cardName)
+        }
         showCurrentSettingsTabCard()
-        val tabStrip = buildSettingsTabStrip()
         refreshSettingsTabButtons()
-        settingsView.add(tabStrip, BorderLayout.NORTH)
+        if (visibleSettingsTabCount() > 1) {
+            settingsView.add(buildSettingsTabStrip(), BorderLayout.NORTH)
+        }
         settingsView.add(settingsContentCards, BorderLayout.CENTER)
         settingsView.revalidate()
         settingsView.repaint()
@@ -1514,7 +1581,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         ignoreTrailingWhitespace.isOpaque = false
         outputSplitEnabled.isOpaque = false
         noExpectedModeEnabled.isOpaque = false
+        showStderrEnabled.isOpaque = false
         confidentSubmitEnabled.isOpaque = false
+        parallelCaseRunEnabled.isOpaque = false
+        gccBitsPchEnabled.isOpaque = false
+        parallelCaseRunHelp.foreground = theme.run
+        parallelCaseRunHelp.horizontalAlignment = SwingConstants.CENTER
+        parallelCaseRunHelp.preferredSize = Dimension(JBUIScale.scale(18), parallelCaseRunHelp.preferredSize.height)
+        gccBitsPchHelp.foreground = theme.run
+        gccBitsPchHelp.horizontalAlignment = SwingConstants.CENTER
+        gccBitsPchHelp.preferredSize = Dimension(JBUIScale.scale(18), gccBitsPchHelp.preferredSize.height)
         languageCombo.background = theme.surface
         cppStandardCombo.background = theme.surface
         compileOptionsField.background = theme.editor
@@ -1527,7 +1603,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         singleFileWorkingDirectoryField.emptyText.text = CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY
         settingsGrid.isFocusable = true
         settingsGrid.background = theme.panel
-        settingsGrid.border = EmptyBorder(10, 0, 0, 0)
+        settingsGrid.border = EmptyBorder(12, 0, 0, 0)
         rebuildSettingsGrid()
 
         val viewport = JPanel(BorderLayout())
@@ -1547,29 +1623,33 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun rebuildSettingsGrid() {
         settingsGrid.removeAll()
         val text = CphText.current()
-        settingsGrid.add(settingsSection(text.runSettings) {
+        settingsGrid.add(settingsSection(text.general) {
             settingRow(text.interfaceLanguage, languageCombo)
-            settingCheckBoxRow(singleFileModeEnabled)
+            settingCheckBoxGroupRow(text.workMode, singleFileModeEnabled)
+        })
+        settingsGrid.add(Box.createVerticalStrut(14))
+        settingsGrid.add(settingsSection(text.compileAndRun) {
             settingRow(text.workingDirectory, singleFileWorkingDirectoryControl())
-            settingRow(text.timeLimits, timeoutControl())
+            settingRow(text.timeLimits, shortSpinnerControl(timeoutSpinner, "ms"))
+            settingRow("", parallelCaseRunControl())
+            settingRow("", gccBitsPchControl())
             settingRow(text.cppStandard, cppStandardCombo)
             compileOptionsField.preferredSize = Dimension(260, compileOptionsField.preferredSize.height)
             settingRow(text.compileOptions, compileOptionsField)
         })
-        settingsGrid.add(Box.createVerticalStrut(8))
-        settingsGrid.add(settingsSection(text.outputSettings) {
-            settingCheckBoxRow(ignoreTrailingWhitespace)
-            settingRow(text.fontSize, editorFontSizeSpinner)
-            settingCheckBoxRow(noExpectedModeEnabled)
-            settingCheckBoxRow(outputSplitEnabled)
+        settingsGrid.add(Box.createVerticalStrut(14))
+        settingsGrid.add(settingsSection(text.outputAndDisplay) {
+            settingCheckBoxGroupRow(text.outputComparison, ignoreTrailingWhitespace)
+            settingCheckBoxGroupRow(text.displayMode, noExpectedModeEnabled, outputSplitEnabled, showStderrEnabled)
+            settingRow(text.displayFontSize, shortSpinnerControl(editorFontSizeSpinner))
         })
         if (isCodeforcesSubmitPluginEnabled()) {
-            settingsGrid.add(Box.createVerticalStrut(8))
+            settingsGrid.add(Box.createVerticalStrut(14))
             settingsGrid.add(settingsSection(text.submitSettings) {
                 settingCheckBoxRow(confidentSubmitEnabled)
             })
         }
-        settingsGrid.add(Box.createVerticalStrut(8))
+        settingsGrid.add(Box.createVerticalStrut(14))
         settingsGrid.add(settingsSection(text.shortcuts) {
             settingRow("${text.runAllShortcut}:", runAllShortcutField)
             settingRow("${text.runSelectedShortcut}:", runSelectedCaseShortcutField)
@@ -1584,16 +1664,30 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun buildSettingsTabStrip(): JComponent {
         configureSettingsTabButton(settingsTabButton)
-        configureSettingsTabButton(utilitySettingsTabButton)
-        configureSettingsTabButton(themeSettingsTabButton)
+        if (CphBuildFeatures.utilitySettingsEnabled) {
+            configureSettingsTabButton(utilitySettingsTabButton)
+        }
+        if (CphBuildFeatures.themeSettingsEnabled) {
+            configureSettingsTabButton(themeSettingsTabButton)
+        }
 
         return JPanel(FlowLayout(FlowLayout.LEFT, 8, 6)).also {
             it.background = theme.panel
             it.border = MatteBorder(1, 0, 1, 0, theme.border)
             it.add(settingsTabButton)
-            it.add(utilitySettingsTabButton)
-            it.add(themeSettingsTabButton)
+            if (CphBuildFeatures.utilitySettingsEnabled) {
+                it.add(utilitySettingsTabButton)
+            }
+            if (CphBuildFeatures.themeSettingsEnabled) {
+                it.add(themeSettingsTabButton)
+            }
         }
+    }
+
+    private fun visibleSettingsTabCount(): Int {
+        return 1 +
+            (if (CphBuildFeatures.utilitySettingsEnabled) 1 else 0) +
+            (if (CphBuildFeatures.themeSettingsEnabled) 1 else 0)
     }
 
     private fun configureSettingsTabButton(button: JButton) {
@@ -1956,6 +2050,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun selectPluginTheme(themeId: String) {
         if (running) return
         val normalizedThemeId = CphThemeId.normalize(themeId)
+        if (!CphBuildFeatures.themeSettingsEnabled && normalizedThemeId != CphThemeId.CLASSIC) {
+            return
+        }
         if (normalizedThemeId == CphThemeId.AVE_MUJICA) {
             handleAveMujicaThemeAction()
             return
@@ -2013,6 +2110,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun checkAveMujicaThemeUpdates() {
+        if (!CphBuildFeatures.aveMujicaThemeEnabled) return
         themeAssetService.checkForUpdatesAsync {
             refreshThemePluginUi()
             if (activeSettingsTab == SettingsPanelTab.THEMES) {
@@ -2029,6 +2127,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun refreshThemePluginUi() {
+        if (!CphBuildFeatures.themeSettingsEnabled) return
         val selectedThemeId = CphThemeId.normalize(CphPluginSettings.getInstance().state.selectedThemeId)
         val classicSelected = selectedThemeId == CphThemeId.CLASSIC
         val aveMujicaState = themeAssetService.state(CphThemeId.AVE_MUJICA)
@@ -2125,7 +2224,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         stopAveMujicaLineHighlightAnimation()
         stopAveMujicaStatusGlyphAnimation()
         background = theme.panel
-        listOf(inputArea, expectedArea, actualArea).forEach(::configureEditor)
+        listOf(inputArea, expectedArea, actualArea, stderrArea).forEach(::configureEditor)
         contentCards.removeAll()
         settingsContentCards.removeAll()
         tabStrip.removeAll()
@@ -2158,7 +2257,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun showSettingsTab(tab: SettingsPanelTab) {
-        activeSettingsTab = tab
+        activeSettingsTab = normalizeSettingsTab(tab)
         showCurrentSettingsTabCard()
         refreshSettingsTabButtons()
         settingsContentCards.revalidate()
@@ -2166,13 +2265,29 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun showCurrentSettingsTabCard() {
+        activeSettingsTab = normalizeSettingsTab(activeSettingsTab)
         (settingsContentCards.layout as? CardLayout)?.show(settingsContentCards, activeSettingsTab.cardName)
     }
 
     private fun refreshSettingsTabButtons() {
+        activeSettingsTab = normalizeSettingsTab(activeSettingsTab)
         refreshSettingsTabButton(settingsTabButton, activeSettingsTab == SettingsPanelTab.SETTINGS)
-        refreshSettingsTabButton(utilitySettingsTabButton, activeSettingsTab == SettingsPanelTab.UTILITY)
-        refreshSettingsTabButton(themeSettingsTabButton, activeSettingsTab == SettingsPanelTab.THEMES)
+        utilitySettingsTabButton.isVisible = CphBuildFeatures.utilitySettingsEnabled
+        themeSettingsTabButton.isVisible = CphBuildFeatures.themeSettingsEnabled
+        if (CphBuildFeatures.utilitySettingsEnabled) {
+            refreshSettingsTabButton(utilitySettingsTabButton, activeSettingsTab == SettingsPanelTab.UTILITY)
+        }
+        if (CphBuildFeatures.themeSettingsEnabled) {
+            refreshSettingsTabButton(themeSettingsTabButton, activeSettingsTab == SettingsPanelTab.THEMES)
+        }
+    }
+
+    private fun normalizeSettingsTab(tab: SettingsPanelTab): SettingsPanelTab {
+        return when (tab) {
+            SettingsPanelTab.SETTINGS -> SettingsPanelTab.SETTINGS
+            SettingsPanelTab.UTILITY -> if (CphBuildFeatures.utilitySettingsEnabled) tab else SettingsPanelTab.SETTINGS
+            SettingsPanelTab.THEMES -> if (CphBuildFeatures.themeSettingsEnabled) tab else SettingsPanelTab.SETTINGS
+        }
     }
 
     private fun refreshSettingsTabButton(button: JButton, selected: Boolean) {
@@ -2332,20 +2447,27 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         content: JPanel.() -> Unit,
     ): JPanel {
         val body = JPanel(GridBagLayout()).also {
-            it.background = theme.surface
+            it.background = theme.panel
+            it.isOpaque = false
             it.content()
         }
-        val header = JPanel(BorderLayout(8, 0)).also {
-            it.background = theme.surface
-            it.add(JBLabel(title).also { label -> label.foreground = theme.text }, BorderLayout.WEST)
+        val header = JPanel(BorderLayout(10, 0)).also {
+            it.background = theme.panel
+            it.isOpaque = false
+            it.border = MatteBorder(0, 0, 1, 0, theme.border)
+            it.add(JBLabel(title).also { label ->
+                label.foreground = theme.text
+                label.font = label.font.deriveFont(Font.BOLD)
+                label.border = EmptyBorder(0, 0, 6, 0)
+            }, BorderLayout.WEST)
             headerRight?.let { right ->
-                right.background = theme.surface
+                right.background = theme.panel
                 it.add(right, BorderLayout.EAST)
             }
         }
-        return JPanel(BorderLayout(0, 8)).also {
-            it.background = theme.surface
-            it.border = CompoundBorder(MatteBorder(1, 1, 1, 1, theme.border), EmptyBorder(10, 12, 10, 12))
+        return JPanel(BorderLayout(0, 10)).also {
+            it.background = theme.panel
+            it.border = EmptyBorder(0, 12, 0, 12)
             it.alignmentX = Component.LEFT_ALIGNMENT
             it.add(header, BorderLayout.NORTH)
             it.add(body, BorderLayout.CENTER)
@@ -2356,7 +2478,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun JPanel.settingRow(label: String, component: JComponent) {
         val row = nextSettingRow()
-        add(JBLabel(label).also { it.foreground = theme.text }, settingConstraints(row, 0, weightx = 0.0))
+        add(settingLabel(label), settingConstraints(row, 0, weightx = 0.0))
         add(component, settingConstraints(row, 1, weightx = 1.0))
     }
 
@@ -2364,6 +2486,34 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val row = nextSettingRow()
         checkBox.isOpaque = false
         add(checkBox, settingConstraints(row, 0, gridwidth = 2, weightx = 1.0))
+    }
+
+    private fun JPanel.settingCheckBoxGroupRow(label: String, vararg checkBoxes: JCheckBox) {
+        val row = nextSettingRow()
+        val group = JPanel().also {
+            it.layout = BoxLayout(it, BoxLayout.Y_AXIS)
+            it.background = theme.panel
+            it.isOpaque = false
+            checkBoxes.forEachIndexed { index, checkBox ->
+                checkBox.isOpaque = false
+                checkBox.alignmentX = Component.LEFT_ALIGNMENT
+                it.add(checkBox)
+                if (index < checkBoxes.lastIndex) {
+                    it.add(Box.createVerticalStrut(4))
+                }
+            }
+        }
+        add(settingLabel(label), settingConstraints(row, 0, weightx = 0.0))
+        add(group, settingConstraints(row, 1, weightx = 1.0))
+    }
+
+    private fun settingLabel(text: String): JBLabel {
+        return JBLabel(text).also {
+            it.foreground = theme.text
+            it.preferredSize = Dimension(JBUIScale.scale(SETTING_LABEL_WIDTH), it.preferredSize.height)
+            it.minimumSize = Dimension(JBUIScale.scale(SETTING_LABEL_WIDTH), it.minimumSize.height)
+            it.horizontalAlignment = SwingConstants.LEFT
+        }
     }
 
     private fun JPanel.nextSettingRow(): Int {
@@ -2385,7 +2535,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             this.weightx = weightx
             fill = GridBagConstraints.HORIZONTAL
             anchor = GridBagConstraints.WEST
-            insets = Insets(3, 0, 3, if (column == 0 && gridwidth == 1) 10 else 0)
+            insets = Insets(4, 0, 4, if (column == 0 && gridwidth == 1) 14 else 0)
         }
     }
 
@@ -2398,13 +2548,37 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
-    private fun timeoutControl(): JComponent {
+    private fun shortSpinnerControl(spinner: JSpinner, suffix: String? = null): JComponent {
         return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
-            it.background = theme.surface
+            spinner.preferredSize = Dimension(JBUIScale.scale(110), spinner.preferredSize.height)
+            spinner.minimumSize = Dimension(JBUIScale.scale(90), spinner.minimumSize.height)
+            it.background = theme.panel
             it.isOpaque = false
-            it.add(timeoutSpinner)
-            it.add(Box.createHorizontalStrut(8))
-            it.add(JBLabel("ms").also { label -> label.foreground = theme.text })
+            it.add(spinner)
+            suffix?.let { suffixText ->
+                it.add(Box.createHorizontalStrut(8))
+                it.add(JBLabel(suffixText).also { label -> label.foreground = theme.text })
+            }
+        }
+    }
+
+    private fun parallelCaseRunControl(): JComponent {
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
+            it.background = theme.panel
+            it.isOpaque = false
+            it.add(parallelCaseRunEnabled)
+            it.add(Box.createHorizontalStrut(6))
+            it.add(parallelCaseRunHelp)
+        }
+    }
+
+    private fun gccBitsPchControl(): JComponent {
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).also {
+            it.background = theme.panel
+            it.isOpaque = false
+            it.add(gccBitsPchEnabled)
+            it.add(Box.createHorizontalStrut(6))
+            it.add(gccBitsPchHelp)
         }
     }
 
@@ -2438,13 +2612,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val uiState = stateService.getState().ui
         outputSplitEnabled.isSelected = uiState.outputSplitEnabled
         noExpectedModeEnabled.isSelected = uiState.noExpectedModeEnabled
+        showStderrEnabled.isSelected = uiState.showStderrEnabled
         confidentSubmitEnabled.isSelected = uiState.confidentSubmitEnabled
+        parallelCaseRunEnabled.isSelected = uiState.parallelCaseRunEnabled
         outputSplitEnabled.isEnabled = !running && !uiState.noExpectedModeEnabled
 
-        val outputView = when {
+        val mainOutputView = when {
             uiState.noExpectedModeEnabled -> singleActualOutput(uiState)
             uiState.outputSplitEnabled -> horizontalOutputSplit(uiState)
             else -> verticalOutputSplit()
+        }
+        val outputView = if (uiState.showStderrEnabled) {
+            outputWithStderr(mainOutputView, uiState)
+        } else {
+            mainOutputView
         }
         outputContainer.add(outputView, BorderLayout.CENTER)
         outputContainer.revalidate()
@@ -2503,6 +2684,20 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         ).also { splitPane ->
             splitPane.resizeWeight = 0.5
             SwingUtilities.invokeLater { splitPane.setDividerLocation(0.5) }
+        }
+    }
+
+    private fun outputWithStderr(mainOutputView: JComponent, uiState: CphUiState): JSplitPane {
+        return outputSplitPane(
+            orientation = JSplitPane.VERTICAL_SPLIT,
+            first = mainOutputView,
+            second = labeledOutput(
+                CphText.current().standardError,
+                scroll(stderrArea, uiState.actualHeight),
+            ),
+        ).also { splitPane ->
+            splitPane.resizeWeight = 0.72
+            SwingUtilities.invokeLater { splitPane.setDividerLocation(0.72) }
         }
     }
 
@@ -2804,7 +2999,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             editorFontSizeSpinner.value = clamped
         }
         val font = Font(Font.MONOSPACED, Font.PLAIN, clamped)
-        listOf(inputArea, expectedArea, actualArea).forEach { area ->
+        listOf(inputArea, expectedArea, actualArea, stderrArea).forEach { area ->
             area.font = font
             area.revalidate()
             area.repaint()
@@ -2893,11 +3088,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             setSingleFileWorkingDirectoryText(stateService.getState().singleFileWorkingDirectory)
             editorFontSizeSpinner.value = stateService.getState().ui.editorFontSize
             noExpectedModeEnabled.isSelected = stateService.getState().ui.noExpectedModeEnabled
+            showStderrEnabled.isSelected = stateService.getState().ui.showStderrEnabled
             confidentSubmitEnabled.isSelected = stateService.getState().ui.confidentSubmitEnabled
+            parallelCaseRunEnabled.isSelected = stateService.getState().ui.parallelCaseRunEnabled
             ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
             val compileSettings = stateService.getState().compileSettings
             cppStandardCombo.selectedItem = compileSettings.cppStandard
             compileOptionsField.text = compileSettings.compileOptions
+            gccBitsPchEnabled.isSelected = compileSettings.gccBitsPchEnabled
         } finally {
             applyingTargetSettings = false
         }
@@ -3030,16 +3228,33 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         object : Task.Backgroundable(project, CphText.current().preparingDebugTask(), false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = CphText.current().preparingCase(testCase.name)
-                val syncError = compileSettingsSynchronizer.sync(
+                val syncResult = compileSettingsSynchronizer.sync(
                     identity,
                     targetCases,
                     stateService.getState().compileSettings.toCompileSettings(),
                     waitForCppFileTarget = true,
-                ).error
+                )
+                val syncError = syncResult.error
+                val preparation = if (syncError == null) {
+                    CphRunner(project).prepareForRun(identity)
+                } else {
+                    null
+                }
                 ApplicationManager.getApplication().invokeLater {
                     if (syncError != null) {
                         reportDebugError("Failed to prepare C/C++ File target: $syncError")
+                    } else if (preparation is CphRunPreparation.Failed) {
+                        reportDebugError(preparation.result.message)
                     } else {
+                        if (preparation is CphRunPreparation.Ready) {
+                            showLocalCompileDiagnostics(
+                                localCompileDiagnosticSummary(
+                                    prefix = "调试准备",
+                                    syncResult = syncResult,
+                                    prepareDiagnostics = preparation.diagnostics,
+                                ),
+                            )
+                        }
                         launchDebugCase(identity, testCase)
                     }
                 }
@@ -3061,6 +3276,44 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runCases(currentTargetCases.cases, ActiveRunButton.RUN_ALL)
     }
 
+    private fun showLocalCompileDiagnostics(message: String) {
+        if (!CphBuildFeatures.localDiagnosticsEnabled || message.isBlank()) return
+        if (!SwingUtilities.isEventDispatchThread()) {
+            ApplicationManager.getApplication().invokeLater { showLocalCompileDiagnostics(message) }
+            return
+        }
+        compileDiagnosticsLabel.text = message
+        compileDiagnosticsLabel.toolTipText = message
+        compileDiagnosticsPanel.isVisible = true
+        compileDiagnosticsPanel.revalidate()
+        compileDiagnosticsPanel.repaint()
+        StatusBar.Info.set(message, project)
+    }
+
+    private fun localCompileDiagnosticSummary(
+        prefix: String,
+        syncResult: CphCompileSyncResult,
+        prepareDiagnostics: CphRunPrepareDiagnostics,
+    ): String {
+        val totalMillis = syncResult.syncMillis + prepareDiagnostics.totalPrepareMillis
+        val pch = pchDiagnosticText(syncResult)
+        val build = if (prepareDiagnostics.buildSkippedByCphCache) {
+            "skipped"
+        } else {
+            CphUiText.formatDuration(prepareDiagnostics.buildMillis)
+        }
+        val cache = if (prepareDiagnostics.buildSkippedByCphCache) "hit" else "miss"
+        return "$prefix ${CphUiText.formatDuration(totalMillis)} | PCH: $pch | " +
+            "PCH准备 ${CphUiText.formatDuration(syncResult.managedArgsMillis)} | " +
+            "CLion构建 $build | CPH缓存 $cache"
+    }
+
+    private fun pchDiagnosticText(syncResult: CphCompileSyncResult): String {
+        val status = syncResult.pchStatus.name.lowercase()
+        val message = syncResult.pchMessage.takeIf { it.isNotBlank() }
+        return if (message == null) status else "$status($message)"
+    }
+
     private fun runCases(cases: List<CphTestCase>, source: ActiveRunButton) {
         if (!isCphEnabled()) return
         if (cases.isEmpty() || running) return
@@ -3076,7 +3329,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             source == ActiveRunButton.RUN_ALL
         var completedAllCases = false
         runtimeStates.clear()
-        runCases.forEach { runtimeStates[it.id] = RuntimeTabState.RUNNING }
+        runCases.forEach { runtimeStates[it.id] = RuntimeTabState.QUEUED }
         refreshTabs()
         startRunSpinner(source)
         setRunning(true)
@@ -3094,12 +3347,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
-                val syncError = compileSettingsSynchronizer.sync(
+                val syncResult = compileSettingsSynchronizer.sync(
                     identity,
                     targetCases,
                     stateService.getState().compileSettings.toCompileSettings(),
                     waitForCppFileTarget = true,
-                ).error
+                )
+                val syncError = syncResult.error
                 if (syncError != null) {
                     val result = CphCaseResult(
                         verdict = CphVerdict.ERROR,
@@ -3111,7 +3365,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 }
 
                 indicator.text = CphText.current().preparingRunTarget()
-                val preparedTarget = when (val preparation = runner.prepareForRun(identity)) {
+                val preparation = runner.prepareForRun(identity)
+                val preparedTarget = when (preparation) {
                     is CphRunPreparation.Failed -> {
                         runCases.forEach { it.lastResult = preparation.result.copy() }
                         runCases.forEach { reportCaseError(it, it.lastResult) }
@@ -3119,6 +3374,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     }
                     is CphRunPreparation.Ready -> preparation.target
                 }
+                showLocalCompileDiagnostics(
+                    localCompileDiagnosticSummary(
+                        prefix = "编译",
+                        syncResult = syncResult,
+                        prepareDiagnostics = preparation.diagnostics,
+                    ),
+                )
 
                 val session = CphSampleRunSession(project, caseRunParallelism(runCases.size))
                 indicator.text = CphText.current().runningSamples(runCases.size)
@@ -3132,6 +3394,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         noExpectedMode = noExpectedMode,
                     ),
                     indicator = indicator,
+                    onCaseStarted = { testCase ->
+                        ApplicationManager.getApplication().invokeLater {
+                            if (runtimeStates[testCase.id] == RuntimeTabState.QUEUED) {
+                                runtimeStates[testCase.id] = RuntimeTabState.RUNNING
+                                refreshTabs()
+                            }
+                        }
+                    },
                 ) { completion ->
                     indicator.text = CphText.current().completedSamples(completion.completedCases, completion.totalCases)
                     indicator.fraction = completion.completedCases.toDouble() / completion.totalCases
@@ -3176,6 +3446,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun caseRunParallelism(caseCount: Int): Int {
+        if (!stateService.getState().ui.parallelCaseRunEnabled) return 1
         val cpuCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         return minOf(caseCount, cpuCount, MAX_PARALLEL_CASE_RUNS).coerceAtLeast(1)
     }
@@ -3189,6 +3460,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val statusMessage = CphUiText.errorStatusMessage(testCase.name, result)
         val report = CphErrorReportBuilder.sample(project, currentIdentity, testCase, result)
         StatusBar.Info.set(statusMessage, project)
+        if (CphUiText.isCompileLikeError(result)) {
+            CphBuildOutputService.getInstance(project).showCompileError()
+            return
+        }
         NotificationGroupManager.getInstance()
             .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
             .createNotification(CphText.current().sampleFailedTitle(), CphUiText.errorNotificationContent(testCase.name, result), NotificationType.ERROR)
@@ -3331,15 +3606,18 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         inputArea.isEnabled = enabled
         expectedArea.isEnabled = enabled
         actualArea.isEnabled = enabled
+        stderrArea.isEnabled = enabled
 
         if (testCase == null) {
             inputArea.text = ""
             expectedArea.text = ""
             actualArea.text = ""
+            stderrArea.text = ""
         } else {
             inputArea.text = testCase.input
             expectedArea.text = testCase.expectedOutput
             actualArea.text = testCase.lastResult.actualOutput
+            stderrArea.text = testCase.lastResult.stderr
         }
         refreshActualDiffHighlights()
         updateActions()
@@ -3466,7 +3744,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         return when (runtimeStates[testCase.id]) {
             RuntimeTabState.RUNNING -> TabStatus.RUNNING
             RuntimeTabState.QUEUED -> TabStatus.QUEUED
-            null -> tabStatusFor(CphStatusMapper.displayStatus(testCase.lastResult.verdict, noExpectedMode))
+            null -> tabStatusFor(CphStatusMapper.displayStatus(testCase.lastResult, noExpectedMode))
         }
     }
 
@@ -3478,6 +3756,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             CphRunDisplayStatus.WA -> TabStatus.WA
             CphRunDisplayStatus.TLE -> TabStatus.TLE
             CphRunDisplayStatus.RE -> TabStatus.RE
+            CphRunDisplayStatus.CE -> TabStatus.CE
             CphRunDisplayStatus.ERROR -> TabStatus.ERROR
         }
     }
@@ -3489,6 +3768,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             TabStatus.WA,
             TabStatus.RE,
             TabStatus.ERROR -> theme.bad
+            TabStatus.CE,
             TabStatus.TLE -> theme.warn
             TabStatus.RUNNING -> theme.run
             TabStatus.QUEUED,
@@ -3501,6 +3781,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 TabStatus.WA,
                 TabStatus.RE,
                 TabStatus.ERROR -> CphThemeTabStatus.BAD
+                TabStatus.CE,
                 TabStatus.TLE -> CphThemeTabStatus.WARN
                 TabStatus.RUNNING -> CphThemeTabStatus.RUN
                 TabStatus.QUEUED,
@@ -3566,6 +3847,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             TabStatus.WA,
             TabStatus.RE,
             TabStatus.ERROR -> StatusGlyphColors(Color(0x62000C), Color(0xFF2A3D), Color(0xFFC0C8))
+            TabStatus.CE,
             TabStatus.TLE -> StatusGlyphColors(Color(0x765012), Color(0xF2A93B), Color(0xFFE9A6))
             TabStatus.RUNNING -> StatusGlyphColors(Color(0x384E95), Color(0x7FA7FF), Color(0xD7E5FF))
             TabStatus.QUEUED,
@@ -3631,7 +3913,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         editorFontSizeSpinner.isEnabled = !running
         languageCombo.isEnabled = !running
         noExpectedModeEnabled.isEnabled = !running
+        showStderrEnabled.isEnabled = !running
         confidentSubmitEnabled.isEnabled = codeforcesSubmitEnabled && !running && stateService.getState().singleFileModeEnabled
+        parallelCaseRunEnabled.isEnabled = !running
+        gccBitsPchEnabled.isEnabled = !running
         ignoreTrailingWhitespace.isEnabled = !running
         outputSplitEnabled.isEnabled = !running && !stateService.getState().ui.noExpectedModeEnabled
         cppStandardCombo.isEnabled = !running
@@ -3709,7 +3994,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             title.text = if (statusGlyph != null) {
                 index.toString()
             } else {
-                tabTitle(index, status, includeStatusIcon = theme.id != CphThemeId.AVE_MUJICA)
+                tabTitle(index, status)
             }
             title.foreground = foreground
             title.font = title.font.deriveFont(Font.BOLD, title.font.size2D + caseTabTitleFontDelta())
@@ -3947,19 +4232,19 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private enum class TabStatus(
         val label: String,
-        val icon: String,
         val glyphName: String? = null,
         val wideGlyph: Boolean = false,
     ) {
-        OK("OK", "✓", "ok"),
-        AC("AC", "✓", "ac"),
-        WA("WA", "✕", "wa"),
-        TLE("TLE", "◷", "tle", true),
-        RE("RE", "!", "re"),
-        ERROR("ERR", "!", "err", true),
-        RUNNING("RUN", "●", "run", true),
-        QUEUED("...", "○"),
-        NOT_RUN("-", "○"),
+        OK("OK", "ok"),
+        AC("AC", "ac"),
+        WA("WA", "wa"),
+        TLE("TLE", "tle", true),
+        RE("RE", "re"),
+        CE("CE", "err", true),
+        ERROR("ERR", "err", true),
+        RUNNING("RUN", "run", true),
+        QUEUED("..."),
+        NOT_RUN("-"),
     }
 
     private data class TabStyle(
@@ -4348,16 +4633,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val AVE_MUJICA_ANIMATION_CONFIGURED_PROPERTY = "cph.aveMujica.animationConfigured"
         private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
         private const val SETTINGS_TAB_CONFIGURED_PROPERTY = "cph.settingsTab.configured"
+        private const val SETTING_LABEL_WIDTH = 150
         private const val BASE_FONT_PROPERTY = "cph.baseFont"
         private const val TITLE_ACTION_DEFAULT_TEXT_PROPERTY = "cph.titleAction.defaultText"
         private const val TITLE_ACTION_FEEDBACK_PROPERTY = "cph.titleAction.feedback"
         private const val TITLE_ACTION_MIN_WIDTH_PROPERTY = "cph.titleAction.minWidth"
 
-        private fun tabTitle(index: Int, status: TabStatus, includeStatusIcon: Boolean = true): String {
+        private fun tabTitle(index: Int, status: TabStatus): String {
             return if (status == TabStatus.NOT_RUN) {
                 if (CphUiLanguage.current() == CphUiLanguage.ZH_CN) "$index 样例" else "$index CASE"
-            } else if (includeStatusIcon) {
-                "$index ${status.icon} ${status.label}"
             } else {
                 "$index ${status.label}"
             }
@@ -4370,6 +4654,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 TabStatus.WA,
                 TabStatus.TLE,
                 TabStatus.RE,
+                TabStatus.CE,
                 TabStatus.ERROR -> formatDuration(testCase.lastResult.durationMillis)
                 TabStatus.RUNNING,
                 TabStatus.QUEUED -> ""
@@ -4386,6 +4671,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 TabStatus.WA,
                 TabStatus.TLE,
                 TabStatus.RE -> text.caseVerdict(testCase.name, testCase.lastResult.verdict, duration)
+                TabStatus.CE,
                 TabStatus.ERROR -> CphUiText.errorTooltip(testCase.name, testCase.lastResult)
                 TabStatus.RUNNING -> text.caseRunning(testCase.name)
                 TabStatus.QUEUED -> text.caseQueued(testCase.name)

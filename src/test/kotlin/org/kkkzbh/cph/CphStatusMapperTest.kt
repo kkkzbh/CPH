@@ -21,6 +21,28 @@ class CphStatusMapperTest {
     }
 
     @Test
+    fun compileLikeErrorsUseCeDisplayStatus() {
+        val result = CphCaseResult(
+            verdict = CphVerdict.ERROR,
+            message = "Build failed for C/C++ File configuration 'main.cpp'.",
+        )
+
+        assertEquals(CphRunDisplayStatus.CE, CphStatusMapper.displayStatus(result, noExpectedMode = false))
+        assertEquals(CphRunDisplayStatus.CE, CphStatusMapper.displayStatus(result, noExpectedMode = true))
+    }
+
+    @Test
+    fun nonBuildErrorsKeepGenericErrorDisplayStatus() {
+        val result = CphCaseResult(
+            verdict = CphVerdict.ERROR,
+            message = "Cannot resolve executable for 'demo'.",
+        )
+
+        assertEquals(CphRunDisplayStatus.ERROR, CphStatusMapper.displayStatus(result, noExpectedMode = false))
+        assertEquals(CphRunDisplayStatus.ERROR, CphStatusMapper.displayStatus(result, noExpectedMode = true))
+    }
+
+    @Test
     fun noExpectedResultNormalizationConvertsAcceptedToOk() {
         val accepted = CphCaseResult(verdict = CphVerdict.AC)
         val wrong = CphCaseResult(verdict = CphVerdict.WA)

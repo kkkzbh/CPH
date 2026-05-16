@@ -1,5 +1,8 @@
 package org.kkkzbh.cph
 
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -135,4 +138,208 @@ class CphCompileOptionsTest {
         assertEquals("", update.compilerOptions)
         assertEquals(true, update.changed)
     }
+
+    @Test
+    fun cppFileCompilerOptionsSyncAppendsManagedPchArgs() {
+        val update = CphCppFileCompilerOptionsSync.compute(
+            current = "",
+            settings = CphCompileSettings(CphCppStandard.CPP20, "-O2"),
+            managedArgs = listOf("-I", "/tmp/cph pch"),
+        )
+
+        assertEquals("-O2 -std=c++20 -I '/tmp/cph pch'", update.compilerOptions)
+        assertEquals(true, update.changed)
+    }
+
+    @Test
+    fun cppFileCompilerOptionsSyncStripsOnlyManagedPchArgs() {
+        assertEquals(
+            "-O2 -I /tmp/keep -Wall",
+            CphCppFileCompilerOptionsSync.withoutManagedPchArgs(
+                "-O2 -I /tmp/keep -I /home/u/.cache/JetBrains/CLion/cph-target-runner/pch/abc -Wall",
+            ),
+        )
+        assertEquals(
+            "-O2",
+            CphCppFileCompilerOptionsSync.withoutManagedPchArgs(
+                "-O2 -IC:\\Users\\u\\AppData\\Local\\JetBrains\\CLion\\cph-target-runner\\pch\\abc",
+            ),
+        )
+    }
+
+    @Test
+    fun gccPchDetectsBitsHeaderAndGccVersion() {
+        assertEquals(true, CphGccPchService.sourceIncludesBitsHeader("#include <bits/stdc++.h>\n"))
+        assertEquals(true, CphGccPchService.sourceIncludesBitsHeader(" # include \"bits/stdc++.h\"\n"))
+        assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("#include <vector>\n"))
+        assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("// #include <bits/stdc++.h>\n"))
+        assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("/*\n#include <bits/stdc++.h>\n*/\n"))
+        assertEquals(true, CphGccPchService.isGccVersion("g++ (GCC) 15.1.1"))
+        assertEquals(false, CphGccPchService.isGccVersion("clang version 19.1.0"))
+    }
+
+    @Test
+    fun gccPchKeyChangesWithCompileOptions() {
+        val header = File("/usr/include/c++/bits/stdc++.h")
+        val first = CphGccPchService.pchKey("g++", "g++ (GCC) 15.1.1", header, CphCompileSettings(compileOptions = "-O2"))
+        val second = CphGccPchService.pchKey("g++", "g++ (GCC) 15.1.1", header, CphCompileSettings(compileOptions = "-O0"))
+
+        assertEquals(false, first == second)
+    }
+
+    @Test
+    fun gccPchKeyChangesWithCompilerPath() {
+        val header = File("/usr/include/c++/bits/stdc++.h")
+        val first = CphGccPchService.pchKey("/opt/toolchains/gcc/bin/g++", "g++ (GCC) 15.1.1", header, CphCompileSettings())
+        val second = CphGccPchService.pchKey("C:\\mingw\\bin\\g++.exe", "g++ (GCC) 15.1.1", header, CphCompileSettings())
+
+        assertEquals(false, first == second)
+    }
+
+    @Test
+    fun gccPchParsesDependencyOutputForBitsHeader() {
+        assertEquals(
+            "/usr/include/c++/16/x86_64-redhat-linux/bits/stdc++.h",
+            CphGccPchService.parseBitsHeaderDependency(
+                """
+                cph_pch_probe: /tmp/main.cpp \
+                 /usr/include/c++/16/x86_64-redhat-linux/bits/stdc++.h \
+                 /usr/include/c++/16/vector
+                """.trimIndent(),
+            ),
+        )
+        assertEquals(
+            "C:/msys64/ucrt64/include/c++/15/x86_64-w64-mingw32/bits/stdc++.h",
+            CphGccPchService.parseBitsHeaderDependency(
+                "cph_pch_probe: C:/msys64/ucrt64/include/c++/15/x86_64-w64-mingw32/bits/stdc++.h",
+            ),
+        )
+        assertEquals(
+            "C:/msys64/ucrt64/include/c++/15/x86_64-w64-mingw32/bits/stdc++.h",
+            CphGccPchService.parseBitsHeaderDependency(
+                "cph_pch_probe: C\\:/msys64/ucrt64/include/c++/15/x86_64-w64-mingw32/bits/stdc++.h",
+            ),
+        )
+        assertEquals(
+            "C:\\msys64\\ucrt64\\include\\c++\\15\\x86_64-w64-mingw32\\bits\\stdc++.h",
+            CphGccPchService.parseBitsHeaderDependency(
+                "cph_pch_probe: C:\\msys64\\ucrt64\\include\\c++\\15\\x86_64-w64-mingw32\\bits\\stdc++.h",
+            ),
+        )
+        assertEquals(
+            "/opt/gcc 16/include/c++/bits/stdc++.h",
+            CphGccPchService.parseBitsHeaderDependency(
+                "cph_pch_probe: /opt/gcc\\ 16/include/c++/bits/stdc++.h /usr/include/vector",
+            ),
+        )
+    }
+
+    @Test
+    fun gccPchProbeKeyChangesWithCompilerToolchainStandardAndOptions() {
+        val base = CphBitsHeaderProbeInput(
+            compilerPath = "/usr/bin/g++",
+            compilerLastModified = 1L,
+            compilerLength = 2L,
+            toolchainName = "Default",
+            toolchainEnvironment = "PATH=/usr/bin",
+            standardFlag = "-std=c++26",
+            compileOptions = "-O2",
+        )
+        val baseKey = CphGccPchService.probeKey(base)
+
+        listOf(
+            base.copy(compilerPath = "/opt/gcc/bin/g++"),
+            base.copy(compilerLastModified = 3L),
+            base.copy(compilerLength = 4L),
+            base.copy(toolchainName = "MinGW"),
+            base.copy(toolchainEnvironment = "PATH=C:\\msys64\\ucrt64\\bin"),
+            base.copy(standardFlag = "-std=c++23"),
+            base.copy(compileOptions = "-O0"),
+        ).forEach {
+            assertEquals(false, baseKey == CphGccPchService.probeKey(it))
+        }
+    }
+
+    @Test
+    fun gccPchPositiveProbeCacheHitDoesNotInvokeProbe() {
+        val dir = Files.createTempDirectory("cph-probe-cache").toFile()
+        try {
+            val header = File(dir, "bits/stdc++.h")
+            header.parentFile.mkdirs()
+            header.writeText("// header")
+            val input = sampleProbeInput(dir)
+            val cache = CphBitsHeaderProbeCache(dir)
+            cache.resolve(input) {
+                CphBitsHeaderProbeResolution.Found(header, "g++ (GCC) 16.1.1", "header probe 1ms")
+            }
+
+            val reloaded = CphBitsHeaderProbeCache(dir)
+            var called = false
+            val hit = reloaded.resolve(input) {
+                called = true
+                CphBitsHeaderProbeResolution.Missing("should not run")
+            }
+
+            assertEquals(false, called)
+            assertEquals(true, hit is CphBitsHeaderProbeResolution.Found)
+            assertEquals("probe cache hit", (hit as CphBitsHeaderProbeResolution.Found).summary)
+            assertEquals(header.canonicalFile, hit.header)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun gccPchNegativeProbeCacheIsInMemoryOnly() {
+        val dir = Files.createTempDirectory("cph-probe-cache").toFile()
+        try {
+            val input = sampleProbeInput(dir)
+            val cache = CphBitsHeaderProbeCache(dir)
+            cache.resolve(input) {
+                CphBitsHeaderProbeResolution.Missing("no bits header: g++")
+            }
+
+            var calledAgain = false
+            val cachedMiss = cache.resolve(input) {
+                calledAgain = true
+                CphBitsHeaderProbeResolution.Missing("should not run")
+            }
+            assertEquals(false, calledAgain)
+            assertEquals("no bits header: g++ | probe cached", (cachedMiss as CphBitsHeaderProbeResolution.Missing).summary)
+
+            val reloaded = CphBitsHeaderProbeCache(dir)
+            var calledAfterReload = false
+            reloaded.resolve(input) {
+                calledAfterReload = true
+                CphBitsHeaderProbeResolution.Missing("no bits header: g++")
+            }
+            assertEquals(true, calledAfterReload)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun gccPchEscapesWindowsIncludePaths() {
+        assertEquals(
+            "C:\\\\mingw\\\\include\\\\c++\\\\bits\\\\stdc++.h",
+            CphGccPchService.escapeIncludePath("C:\\mingw\\include\\c++\\bits\\stdc++.h"),
+        )
+    }
+
+    @Test
+    fun cppFileCompilerResolverKeepsBareCompilerCommandRelative() {
+        assertEquals("c++", CphCppFileCompilerResolver.compilerCommandPath(Path.of("c++")))
+    }
+
+    private fun sampleProbeInput(dir: File): CphBitsHeaderProbeInput =
+        CphBitsHeaderProbeInput(
+            compilerPath = File(dir, "g++").absolutePath,
+            compilerLastModified = 1L,
+            compilerLength = 2L,
+            toolchainName = "Default",
+            toolchainEnvironment = "PATH=/usr/bin",
+            standardFlag = "-std=c++26",
+            compileOptions = "-O2",
+        )
 }

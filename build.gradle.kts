@@ -1,5 +1,6 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.GradleException
 import org.gradle.api.tasks.bundling.Zip
 import java.security.MessageDigest
 
@@ -10,7 +11,22 @@ plugins {
 }
 
 group = providers.gradleProperty("pluginGroup").get()
-version = providers.gradleProperty("pluginVersion").get()
+val stablePluginVersion = providers.gradleProperty("stablePluginVersion")
+val eapPluginVersion = providers.gradleProperty("eapPluginVersion")
+val cphVariant = providers.gradleProperty("cphVariant")
+    .orElse("stable")
+    .map { it.trim().lowercase() }
+val cphLocalDiagnostics = providers.gradleProperty("cphLocalDiagnostics")
+    .map { it.toBooleanStrictOrNull() ?: false }
+    .orElse(false)
+val resolvedPluginVersion = cphVariant.flatMap { variant ->
+    when (variant) {
+        "stable" -> stablePluginVersion
+        "eap" -> eapPluginVersion
+        else -> throw GradleException("cphVariant must be 'stable' or 'eap', got '$variant'.")
+    }
+}
+version = resolvedPluginVersion.get()
 
 val platformVersion = providers.gradleProperty("platformVersion")
 val useLocalClion = providers.gradleProperty("useLocalClion")
@@ -34,6 +50,66 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_21)
     }
+    sourceSets {
+        main {
+            kotlin.srcDir(layout.buildDirectory.dir("generated/cphBuildFeatures/kotlin"))
+        }
+    }
+}
+
+val validateReleaseVersions by tasks.registering {
+    inputs.property("stablePluginVersion", stablePluginVersion)
+    inputs.property("eapPluginVersion", eapPluginVersion)
+    inputs.property("cphVariant", cphVariant)
+    doLast {
+        val variant = cphVariant.get()
+        val stableVersion = stablePluginVersion.get().trim()
+        val eapVersion = eapPluginVersion.get().trim()
+        if (variant != "stable" && variant != "eap") {
+            throw GradleException("cphVariant must be 'stable' or 'eap', got '$variant'.")
+        }
+        if (Regex("-(eap|alpha|beta|rc)(\\.|$)").containsMatchIn(stableVersion)) {
+            throw GradleException("stablePluginVersion must be a stable version, got '$stableVersion'.")
+        }
+        if (!Regex("-eap\\.[0-9]+$").containsMatchIn(eapVersion)) {
+            throw GradleException("eapPluginVersion must end with -eap.N, got '$eapVersion'.")
+        }
+        if (stableVersion == eapVersion) {
+            throw GradleException("stablePluginVersion and eapPluginVersion must be different.")
+        }
+    }
+}
+
+val generateCphBuildFeatures by tasks.registering {
+    dependsOn(validateReleaseVersions)
+    inputs.property("cphVariant", cphVariant)
+    inputs.property("cphLocalDiagnostics", cphLocalDiagnostics)
+    val outputDir = layout.buildDirectory.dir("generated/cphBuildFeatures/kotlin/org/kkkzbh/cph")
+    outputs.dir(outputDir)
+    doLast {
+        val variant = cphVariant.get()
+        val eap = variant == "eap"
+        val localDiagnostics = cphLocalDiagnostics.get()
+        outputDir.get().file("CphBuildFeatures.kt").asFile.writeText(
+            """
+            package org.kkkzbh.cph
+
+            internal object CphBuildFeatures {
+                const val releaseChannel: String = "$variant"
+                const val isEap: Boolean = $eap
+                const val localDiagnosticsEnabled: Boolean = $localDiagnostics
+                const val utilitySettingsEnabled: Boolean = $eap
+                const val themeSettingsEnabled: Boolean = $eap
+                const val codeforcesSubmitEnabled: Boolean = $eap
+                const val aveMujicaThemeEnabled: Boolean = $eap
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
+tasks.named("compileKotlin") {
+    dependsOn(generateCphBuildFeatures)
 }
 
 repositories {
@@ -63,7 +139,7 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         name = providers.gradleProperty("pluginName")
-        version = providers.gradleProperty("pluginVersion")
+        version = resolvedPluginVersion
         description = """
             A CLion sidebar helper for competitive-programming samples.
             Manage sample cases per CMake target, run them quickly, compare outputs, and inspect mismatched lines.
@@ -176,6 +252,56 @@ val generateAveMujicaThemeManifest by tasks.registering {
 
 tasks.register("packageAveMujicaTheme") {
     dependsOn(zipAveMujicaTheme, generateAveMujicaThemeManifest)
+}
+
+fun gradleWrapperCommand(): String {
+    return if (System.getProperty("os.name").lowercase().contains("windows")) "gradlew.bat" else "./gradlew"
+}
+
+fun releaseVariantProperties(variant: String): List<String> {
+    return listOf(
+        "-PcphVariant=$variant",
+        "-PstablePluginVersion=${stablePluginVersion.get()}",
+        "-PeapPluginVersion=${eapPluginVersion.get()}",
+        "-PaveMujicaThemeVersion=${aveMujicaThemeVersion.get()}",
+        "-PaveMujicaThemeMinPluginVersion=${aveMujicaThemeMinPluginVersion.get()}",
+    )
+}
+
+val buildStablePlugin by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds and tests the stable CPH plugin variant."
+    workingDir = projectDir
+    commandLine(
+        listOf(gradleWrapperCommand(), "--stacktrace", "test", "buildPlugin", "packageBrowserExtension") +
+            releaseVariantProperties("stable"),
+    )
+}
+
+val buildEapPlugin by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds and tests the EAP CPH plugin variant, including the Ave Mujica theme package."
+    workingDir = projectDir
+    commandLine(
+        listOf(
+            gradleWrapperCommand(),
+            "--stacktrace",
+            "test",
+            "buildPlugin",
+            "packageBrowserExtension",
+            "packageAveMujicaTheme",
+        ) + releaseVariantProperties("eap"),
+    )
+}
+
+tasks.register("buildReleaseVariants") {
+    group = "build"
+    description = "Builds stable and EAP CPH plugin variants."
+    dependsOn(buildStablePlugin, buildEapPlugin)
+}
+
+buildEapPlugin.configure {
+    mustRunAfter(buildStablePlugin)
 }
 
 tasks.named("buildPlugin") {

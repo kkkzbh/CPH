@@ -17,10 +17,20 @@ internal object CphImportPaths {
         Regex("""codeforces\.com/problemset/problem/([^/]+)/([^/?#]+)""", RegexOption.IGNORE_CASE)
     private val acmsguru =
         Regex("""codeforces\.com/problemsets/acmsguru/problem/([^/]+)/([^/?#]+)""", RegexOption.IGNORE_CASE)
+    private val atCoderTask =
+        Regex("""atcoder\.jp/contests/([^/]+)/tasks/([^/?#]+)""", RegexOption.IGNORE_CASE)
+    private val luoguContestProblem =
+        Regex("""luogu\.com\.cn/contest/([^/]+)/problem/([^/?#]+)""", RegexOption.IGNORE_CASE)
+    private val luoguProblem =
+        Regex("""luogu\.com\.cn/problem/([^/?#]+)""", RegexOption.IGNORE_CASE)
+    private val kattisContestProblem =
+        Regex("""open\.kattis\.com/contests/([^/]+)/problems/([^/?#]+)""", RegexOption.IGNORE_CASE)
+    private val kattisProblem =
+        Regex("""open\.kattis\.com/problems/([^/?#]+)""", RegexOption.IGNORE_CASE)
     private val nameLeader = Regex("""^\s*([A-Za-z0-9]+)\s*[.\-:]\s*(.*)$""")
 
     fun coordinates(payload: CompetitiveCompanionPayload): CphProblemCoordinates {
-        val (rawContest, rawIndex, source) = parseUrl(payload.url) ?: parseFromName(payload)
+        val (rawContest, rawIndex, source) = parseUrl(payload) ?: parseFromName(payload)
         val contest = sanitize(rawContest, fallback = "misc")
         val index = sanitize(rawIndex, fallback = sanitize(payload.name, fallback = "problem"))
         val displayName = payload.name.trim()
@@ -48,7 +58,8 @@ internal object CphImportPaths {
         }.let(::stripUnsafeSegments)
     }
 
-    private fun parseUrl(url: String): Triple<String, String, String>? {
+    private fun parseUrl(payload: CompetitiveCompanionPayload): Triple<String, String, String>? {
+        val url = payload.url
         if (url.isBlank()) return null
         codeforcesContestProblem.find(url)?.let {
             return Triple(it.groupValues[1], it.groupValues[2], "codeforces")
@@ -59,6 +70,25 @@ internal object CphImportPaths {
         acmsguru.find(url)?.let {
             return Triple("acmsguru", it.groupValues[2], "codeforces")
         }
+        atCoderTask.find(url)?.let {
+            return Triple(
+                it.groupValues[1],
+                atCoderIndex(payload.name, it.groupValues[1], it.groupValues[2]),
+                "atcoder",
+            )
+        }
+        luoguContestProblem.find(url)?.let {
+            return Triple(it.groupValues[1], it.groupValues[2], "luogu")
+        }
+        luoguProblem.find(url)?.let {
+            return Triple("problems", it.groupValues[1], "luogu")
+        }
+        kattisContestProblem.find(url)?.let {
+            return Triple(it.groupValues[1], it.groupValues[2], "kattis")
+        }
+        kattisProblem.find(url)?.let {
+            return Triple("problems", it.groupValues[1], "kattis")
+        }
         return null
     }
 
@@ -67,6 +97,18 @@ internal object CphImportPaths {
         val contest = payload.group.takeIf { it.isNotBlank() } ?: "misc"
         val index = match?.groupValues?.getOrNull(1) ?: payload.name
         return Triple(contest, index, "generic")
+    }
+
+    private fun atCoderIndex(name: String, contest: String, task: String): String {
+        nameLeader.find(name)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { return it }
+        val prefix = "${contest.lowercase(Locale.ROOT)}_"
+        val normalizedTask = task.lowercase(Locale.ROOT)
+        val suffix = if (normalizedTask.startsWith(prefix)) {
+            task.substring(prefix.length)
+        } else {
+            task.substringAfterLast('_', task)
+        }
+        return suffix.uppercase(Locale.ROOT)
     }
 
     private fun sanitize(value: String, fallback: String): String {

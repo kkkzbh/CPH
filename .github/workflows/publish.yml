@@ -4,23 +4,18 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       publish_target:
-        description: Marketplace channel to publish when force_publish is enabled
-        required: false
-        default: eap
+        description: What to publish after verification
+        required: true
+        default: verify_only
         type: choice
         options:
-          - eap
+          - verify_only
           - stable
-      force_publish:
-        description: Force publish the current ref to the selected Marketplace channel
-        required: false
-        default: false
-        type: boolean
+          - eap
+          - both
 
 permissions:
   contents: write
@@ -33,20 +28,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     outputs:
-      plugin_version_changed: ${{ steps.versions.outputs.plugin_version_changed }}
-      old_plugin_version: ${{ steps.versions.outputs.old_plugin_version }}
-      plugin_version: ${{ steps.versions.outputs.plugin_version }}
+      stable_plugin_version: ${{ steps.versions.outputs.stable_plugin_version }}
+      eap_plugin_version: ${{ steps.versions.outputs.eap_plugin_version }}
       browser_extension_version: ${{ steps.versions.outputs.browser_extension_version }}
-      theme_version_changed: ${{ steps.versions.outputs.theme_version_changed }}
-      old_theme_version: ${{ steps.versions.outputs.old_theme_version }}
       theme_version: ${{ steps.versions.outputs.theme_version }}
-      theme_min_plugin_version: ${{ steps.versions.outputs.theme_min_plugin_version }}
-      should_publish_plugin: ${{ steps.target.outputs.should_publish_plugin }}
-      should_publish_theme: ${{ steps.target.outputs.should_publish_theme }}
-      should_release_plugin: ${{ steps.target.outputs.should_release_plugin }}
       publish_target: ${{ steps.target.outputs.publish_target }}
-      marketplace_channels: ${{ steps.target.outputs.marketplace_channels }}
-      prerelease: ${{ steps.target.outputs.prerelease }}
+      publish_stable: ${{ steps.target.outputs.publish_stable }}
+      publish_eap: ${{ steps.target.outputs.publish_eap }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -62,11 +50,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Detect release inputs
+      - name: Detect release versions
         id: versions
         shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
@@ -76,13 +62,22 @@ jobs:
             awk -F'=' -v name="${property_name}" '$1 ~ "^[[:space:]]*" name "[[:space:]]*$" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "${property_file}"
           }
 
-          plugin_version="$(extract_property pluginVersion gradle.properties)"
+          stable_plugin_version="$(extract_property stablePluginVersion gradle.properties)"
+          eap_plugin_version="$(extract_property eapPluginVersion gradle.properties)"
           browser_extension_version="$(extract_property browserExtensionVersion gradle.properties)"
           theme_version="$(extract_property aveMujicaThemeVersion gradle.properties)"
           theme_min_plugin_version="$(extract_property aveMujicaThemeMinPluginVersion gradle.properties)"
 
-          if [[ -z "${plugin_version}" ]]; then
-            echo "::error::Missing pluginVersion in gradle.properties."
+          if [[ -z "${stable_plugin_version}" ]]; then
+            echo "::error::Missing stablePluginVersion in gradle.properties."
+            exit 1
+          fi
+          if [[ -z "${eap_plugin_version}" ]]; then
+            echo "::error::Missing eapPluginVersion in gradle.properties."
+            exit 1
+          fi
+          if [[ -z "${browser_extension_version}" ]]; then
+            echo "::error::Missing browserExtensionVersion in gradle.properties."
             exit 1
           fi
           if [[ -z "${theme_version}" ]]; then
@@ -94,251 +89,103 @@ jobs:
             exit 1
           fi
 
-          old_plugin_version=""
-          old_theme_version=""
-          plugin_version_changed="false"
-          theme_version_changed="false"
-          theme_resource_changed="false"
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" && -n "${BEFORE_SHA:-}" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
-            tmp_file="$(mktemp)"
-            if git show "${BEFORE_SHA}:gradle.properties" > "${tmp_file}" 2>/dev/null; then
-              old_plugin_version="$(extract_property pluginVersion "${tmp_file}")"
-              old_theme_version="$(extract_property aveMujicaThemeVersion "${tmp_file}")"
-              if [[ "${old_plugin_version}" != "${plugin_version}" ]]; then
-                plugin_version_changed="true"
-              fi
-              if [[ "${old_theme_version}" != "${theme_version}" ]]; then
-                theme_version_changed="true"
-              fi
-            fi
-            rm -f "${tmp_file}"
-
-            if git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- \
-              src/main/resources/icons/avemujica \
-              src/main/resources/fonts/AnglicanText.ttf | grep -q .; then
-              theme_resource_changed="true"
-            fi
+          if [[ "${stable_plugin_version}" =~ -(eap|alpha|beta|rc)(\.|$) ]]; then
+            echo "::error::stablePluginVersion must be a stable version, got ${stable_plugin_version}."
+            exit 1
           fi
-
-          echo "old_plugin_version=${old_plugin_version}" >> "${GITHUB_OUTPUT}"
-          echo "plugin_version=${plugin_version}" >> "${GITHUB_OUTPUT}"
-          echo "plugin_version_changed=${plugin_version_changed}" >> "${GITHUB_OUTPUT}"
-          echo "browser_extension_version=${browser_extension_version}" >> "${GITHUB_OUTPUT}"
-          echo "old_theme_version=${old_theme_version}" >> "${GITHUB_OUTPUT}"
-          echo "theme_version=${theme_version}" >> "${GITHUB_OUTPUT}"
-          echo "theme_min_plugin_version=${theme_min_plugin_version}" >> "${GITHUB_OUTPUT}"
-          echo "theme_version_changed=${theme_version_changed}" >> "${GITHUB_OUTPUT}"
-          echo "theme_resource_changed=${theme_resource_changed}" >> "${GITHUB_OUTPUT}"
-
-          echo "Old plugin version: ${old_plugin_version:-<none>}"
-          echo "Plugin version: ${plugin_version}"
-          echo "Plugin version changed: ${plugin_version_changed}"
-          echo "Browser extension version: ${browser_extension_version}"
-          echo "Old Ave Mujica theme version: ${old_theme_version:-<none>}"
-          echo "Ave Mujica theme version: ${theme_version}"
-          echo "Ave Mujica theme minimum plugin version: ${theme_min_plugin_version}"
-          echo "Ave Mujica theme version changed: ${theme_version_changed}"
-          echo "Ave Mujica theme resources changed: ${theme_resource_changed}"
-
-      - name: Resolve publish targets
-        id: target
-        shell: bash
-        env:
-          FORCE_PUBLISH: ${{ github.event.inputs.force_publish }}
-          INPUT_TARGET: ${{ github.event.inputs.publish_target }}
-          PLUGIN_VERSION: ${{ steps.versions.outputs.plugin_version }}
-          PLUGIN_VERSION_CHANGED: ${{ steps.versions.outputs.plugin_version_changed }}
-          THEME_VERSION_CHANGED: ${{ steps.versions.outputs.theme_version_changed }}
-          THEME_RESOURCE_CHANGED: ${{ steps.versions.outputs.theme_resource_changed }}
-          REF_NAME: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
-        run: |
-          set -euo pipefail
-
-          should_publish_plugin="false"
-          should_publish_theme="false"
-          should_release_plugin="false"
-          publish_target="none"
-          marketplace_channels=""
-          prerelease="false"
-
-          is_eap_version() {
-            [[ "$1" =~ -eap\.[0-9]+$ ]]
-          }
-
-          is_prerelease_version() {
-            [[ "$1" =~ -(eap|alpha|beta|rc)(\.|$) ]]
-          }
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "branch" && "${REF_NAME}" == "main" ]]; then
-            if [[ "${PLUGIN_VERSION_CHANGED}" == "true" ]]; then
-              if is_eap_version "${PLUGIN_VERSION}"; then
-                should_publish_plugin="true"
-                should_release_plugin="true"
-                publish_target="eap"
-                marketplace_channels="eap"
-                prerelease="true"
-              elif is_prerelease_version "${PLUGIN_VERSION}"; then
-                echo "::error::Only versions ending in -eap.N can be auto-published to Marketplace EAP from main. Current pluginVersion: ${PLUGIN_VERSION}"
-                exit 1
-              else
-                echo "pluginVersion changed to stable version ${PLUGIN_VERSION}; main push will verify only. Create tag v${PLUGIN_VERSION} to publish stable."
-              fi
-            fi
-            if [[ "${THEME_VERSION_CHANGED}" == "true" && "${THEME_RESOURCE_CHANGED}" == "true" ]]; then
-              should_publish_theme="true"
-            elif [[ "${THEME_VERSION_CHANGED}" == "true" ]]; then
-              echo "Ave Mujica theme version changed without theme resource changes; theme publish will be skipped."
-            fi
-          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${REF_TYPE}" == "tag" ]]; then
-            expected_tag="v${PLUGIN_VERSION}"
-            if [[ "${REF_NAME}" != "${expected_tag}" ]]; then
-              echo "::error::Stable tag ${REF_NAME} does not match pluginVersion ${PLUGIN_VERSION}. Expected ${expected_tag}."
-              exit 1
-            fi
-            if is_prerelease_version "${PLUGIN_VERSION}"; then
-              echo "::error::Stable tag publishing requires a stable pluginVersion, got ${PLUGIN_VERSION}."
-              exit 1
-            fi
-            should_publish_plugin="true"
-            should_release_plugin="true"
-            publish_target="stable"
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${FORCE_PUBLISH:-false}" == "true" ]]; then
-            case "${INPUT_TARGET:-eap}" in
-              eap)
-                if ! is_eap_version "${PLUGIN_VERSION}"; then
-                  echo "::error::Manual EAP publishing requires pluginVersion ending in -eap.N, got ${PLUGIN_VERSION}."
-                  exit 1
-                fi
-                should_publish_plugin="true"
-                publish_target="eap"
-                marketplace_channels="eap"
-                prerelease="true"
-                ;;
-              stable)
-                if is_prerelease_version "${PLUGIN_VERSION}"; then
-                  echo "::error::Stable publishing requires a stable pluginVersion, got ${PLUGIN_VERSION}."
-                  exit 1
-                fi
-                should_publish_plugin="true"
-                publish_target="stable"
-                expected_tag="v${PLUGIN_VERSION}"
-                if [[ "${REF_TYPE}" == "tag" && "${REF_NAME}" == "${expected_tag}" ]]; then
-                  should_release_plugin="true"
-                else
-                  echo "Manual stable Marketplace publish from ${REF_TYPE}:${REF_NAME}; GitHub Release creation will be skipped."
-                fi
-                ;;
-              *)
-                echo "::error::Unknown publish_target: ${INPUT_TARGET}"
-                exit 1
-                ;;
-            esac
+          if [[ ! "${eap_plugin_version}" =~ -eap\.[0-9]+$ ]]; then
+            echo "::error::eapPluginVersion must end with -eap.N, got ${eap_plugin_version}."
+            exit 1
           fi
-
-          echo "should_publish_plugin=${should_publish_plugin}" >> "${GITHUB_OUTPUT}"
-          echo "should_publish_theme=${should_publish_theme}" >> "${GITHUB_OUTPUT}"
-          echo "should_release_plugin=${should_release_plugin}" >> "${GITHUB_OUTPUT}"
-          echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
-          echo "marketplace_channels=${marketplace_channels}" >> "${GITHUB_OUTPUT}"
-          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
-
-          echo "Should publish plugin: ${should_publish_plugin}"
-          echo "Should publish Ave Mujica theme: ${should_publish_theme}"
-          echo "Should create plugin GitHub Release: ${should_release_plugin}"
-          echo "Plugin publish target: ${publish_target}"
-          echo "Marketplace channels: ${marketplace_channels:-<default>}"
-          echo "GitHub prerelease: ${prerelease}"
-
-      - name: Require plugin metadata update on plugin release pushes
-        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.versions.outputs.plugin_version_changed == 'true'
-        shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          if ! git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" | grep -Fxq "src/main/resources/META-INF/plugin.xml"; then
-            echo "::error::pluginVersion changed, but src/main/resources/META-INF/plugin.xml was not updated."
+          if [[ "${stable_plugin_version}" == "${eap_plugin_version}" ]]; then
+            echo "::error::stablePluginVersion and eapPluginVersion must be different."
             exit 1
           fi
 
-          python3 - <<'PY'
-          import os
-          import re
-          import subprocess
-          import sys
+          echo "stable_plugin_version=${stable_plugin_version}" >> "${GITHUB_OUTPUT}"
+          echo "eap_plugin_version=${eap_plugin_version}" >> "${GITHUB_OUTPUT}"
+          echo "browser_extension_version=${browser_extension_version}" >> "${GITHUB_OUTPUT}"
+          echo "theme_version=${theme_version}" >> "${GITHUB_OUTPUT}"
 
-          before = os.environ["BEFORE_SHA"]
-          path = "src/main/resources/META-INF/plugin.xml"
+          echo "Stable plugin version: ${stable_plugin_version}"
+          echo "EAP plugin version: ${eap_plugin_version}"
+          echo "Browser extension version: ${browser_extension_version}"
+          echo "Ave Mujica theme version: ${theme_version}"
+          echo "Ave Mujica theme minimum plugin version: ${theme_min_plugin_version}"
 
-          def read_at(ref: str) -> str:
-              return subprocess.check_output(["git", "show", f"{ref}:{path}"], text=True)
-
-          def change_notes(text: str) -> str:
-              match = re.search(r"<change-notes><!\[CDATA\[(.*?)\]\]></change-notes>", text, re.S)
-              if not match:
-                  print(f"::error::{path} has no <change-notes> CDATA block.")
-                  sys.exit(1)
-              return "\n".join(line.strip() for line in match.group(1).strip().splitlines() if line.strip())
-
-          old_notes = change_notes(read_at(before))
-          new_notes = change_notes(open(path, encoding="utf-8").read())
-          if old_notes == new_notes:
-              print("::error::pluginVersion changed, but <change-notes> was not updated. Write real What's New notes for this release.")
-              sys.exit(1)
-          PY
-
-      - name: Require theme version bump on theme resource changes
-        if: github.event_name == 'push' && github.ref_type == 'branch' && steps.versions.outputs.theme_resource_changed == 'true' && steps.versions.outputs.theme_version_changed != 'true'
+      - name: Resolve publish target
+        id: target
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.publish_target }}
         run: |
-          echo "::error::Ave Mujica theme resources changed, but aveMujicaThemeVersion was not bumped."
-          exit 1
+          set -euo pipefail
 
-      - name: Run tests and build plugin
-        run: ./gradlew --stacktrace test buildPlugin packageBrowserExtension
+          publish_target="verify_only"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            publish_target="${INPUT_TARGET:-verify_only}"
+          fi
 
-      - name: Build Ave Mujica theme package
-        if: steps.target.outputs.should_publish_theme == 'true'
-        run: ./gradlew --stacktrace packageAveMujicaTheme
+          publish_stable="false"
+          publish_eap="false"
+          case "${publish_target}" in
+            verify_only)
+              ;;
+            stable)
+              publish_stable="true"
+              ;;
+            eap)
+              publish_eap="true"
+              ;;
+            both)
+              publish_stable="true"
+              publish_eap="true"
+              ;;
+            *)
+              echo "::error::Unknown publish_target: ${publish_target}"
+              exit 1
+              ;;
+          esac
 
-      - name: Upload plugin release assets
-        if: steps.target.outputs.should_publish_plugin == 'true'
+          echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
+          echo "publish_stable=${publish_stable}" >> "${GITHUB_OUTPUT}"
+          echo "publish_eap=${publish_eap}" >> "${GITHUB_OUTPUT}"
+
+          echo "Publish target: ${publish_target}"
+          echo "Publish stable: ${publish_stable}"
+          echo "Publish EAP: ${publish_eap}"
+
+      - name: Run tests and build both variants
+        run: ./gradlew --stacktrace buildReleaseVariants
+
+      - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-release-assets-${{ steps.versions.outputs.plugin_version }}
+          name: release-assets
           path: |
-            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.plugin_version }}.zip
+            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.stable_plugin_version }}.zip
+            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.eap_plugin_version }}.zip
             build/distributions/cph-target-runner-browser-${{ steps.versions.outputs.browser_extension_version }}.zip
-          if-no-files-found: error
-
-      - name: Upload Ave Mujica theme release assets
-        if: steps.target.outputs.should_publish_theme == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: avemujica-theme-assets-${{ steps.versions.outputs.theme_version }}
-          path: |
             build/distributions/cph-theme-avemujica-${{ steps.versions.outputs.theme_version }}.zip
             build/distributions/cph-theme-avemujica.json
           if-no-files-found: error
 
-  release_plugin:
+  release_stable:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_release_plugin == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_stable == 'true'
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: v${{ needs.verify.outputs.plugin_version }}
-      PLUGIN_VERSION: ${{ needs.verify.outputs.plugin_version }}
+      RELEASE_TAG: v${{ needs.verify.outputs.stable_plugin_version }}
+      STABLE_PLUGIN_VERSION: ${{ needs.verify.outputs.stable_plugin_version }}
       BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
-      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
     steps:
-      - name: Download plugin release assets
+      - name: Download release assets
         uses: actions/download-artifact@v4
         with:
-          name: plugin-release-assets-${{ needs.verify.outputs.plugin_version }}
+          name: release-assets
           path: release-assets
 
-      - name: Create plugin GitHub Release
+      - name: Create stable GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -346,54 +193,91 @@ jobs:
         run: |
           set -euo pipefail
 
-          plugin_asset="release-assets/clion-cph-target-runner-${PLUGIN_VERSION}.zip"
+          plugin_asset="release-assets/clion-cph-target-runner-${STABLE_PLUGIN_VERSION}.zip"
           browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
 
           if [[ ! -f "${plugin_asset}" ]]; then
-            echo "::error::Missing plugin release asset: ${plugin_asset}"
+            echo "::error::Missing stable plugin release asset: ${plugin_asset}"
             exit 1
           fi
-
           if [[ ! -f "${browser_asset}" ]]; then
             echo "::error::Missing browser extension release asset: ${browser_asset}"
             exit 1
           fi
-
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "::error::GitHub Release ${RELEASE_TAG} already exists. Bump pluginVersion before publishing a new release."
+            echo "::error::GitHub Release ${RELEASE_TAG} already exists. Bump stablePluginVersion before publishing."
             exit 1
           fi
 
-          release_args=(
-            "${RELEASE_TAG}"
-            "${plugin_asset}"
-            "${browser_asset}"
-            --target "${GITHUB_SHA}"
-            --title "CPH Target Runner ${PLUGIN_VERSION}"
-            --notes "Automated release for CPH Target Runner ${PLUGIN_VERSION}."
-          )
+          gh release create "${RELEASE_TAG}" \
+            "${plugin_asset}" \
+            "${browser_asset}" \
+            --target "${GITHUB_SHA}" \
+            --title "CPH Target Runner ${STABLE_PLUGIN_VERSION}" \
+            --notes "Stable release for CPH Target Runner ${STABLE_PLUGIN_VERSION}."
 
-          if [[ "${PRERELEASE}" == "true" ]]; then
-            release_args+=(--prerelease)
+  release_eap:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_eap == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: v${{ needs.verify.outputs.eap_plugin_version }}
+      EAP_PLUGIN_VERSION: ${{ needs.verify.outputs.eap_plugin_version }}
+      BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create EAP GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          plugin_asset="release-assets/clion-cph-target-runner-${EAP_PLUGIN_VERSION}.zip"
+          browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
+
+          if [[ ! -f "${plugin_asset}" ]]; then
+            echo "::error::Missing EAP plugin release asset: ${plugin_asset}"
+            exit 1
+          fi
+          if [[ ! -f "${browser_asset}" ]]; then
+            echo "::error::Missing browser extension release asset: ${browser_asset}"
+            exit 1
+          fi
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::GitHub Release ${RELEASE_TAG} already exists. Bump eapPluginVersion before publishing."
+            exit 1
           fi
 
-          gh release create "${release_args[@]}"
+          gh release create "${RELEASE_TAG}" \
+            "${plugin_asset}" \
+            "${browser_asset}" \
+            --target "${GITHUB_SHA}" \
+            --title "CPH Target Runner ${EAP_PLUGIN_VERSION}" \
+            --notes "EAP prerelease for CPH Target Runner ${EAP_PLUGIN_VERSION}." \
+            --prerelease
 
   release_theme:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_theme == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_eap == 'true'
     runs-on: ubuntu-latest
     env:
       THEME_RELEASE_TAG: theme-avemujica
       THEME_VERSION: ${{ needs.verify.outputs.theme_version }}
     steps:
-      - name: Download Ave Mujica theme release assets
+      - name: Download release assets
         uses: actions/download-artifact@v4
         with:
-          name: avemujica-theme-assets-${{ needs.verify.outputs.theme_version }}
-          path: theme-assets
+          name: release-assets
+          path: release-assets
 
-      - name: Publish Ave Mujica theme release assets
+      - name: Publish Ave Mujica theme assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -401,14 +285,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          theme_asset="theme-assets/cph-theme-avemujica-${THEME_VERSION}.zip"
-          theme_manifest="theme-assets/cph-theme-avemujica.json"
+          theme_asset="release-assets/cph-theme-avemujica-${THEME_VERSION}.zip"
+          theme_manifest="release-assets/cph-theme-avemujica.json"
 
           if [[ ! -f "${theme_asset}" ]]; then
             echo "::error::Missing Ave Mujica theme asset: ${theme_asset}"
             exit 1
           fi
-
           if [[ ! -f "${theme_manifest}" ]]; then
             echo "::error::Missing Ave Mujica theme manifest: ${theme_manifest}"
             exit 1
@@ -423,21 +306,19 @@ jobs:
 
           theme_asset_name="$(basename "${theme_asset}")"
           if gh release view "${THEME_RELEASE_TAG}" --json assets --jq '.assets[].name' | grep -Fxq "${theme_asset_name}"; then
-            echo "::error::Ave Mujica theme asset already exists: ${theme_asset_name}. Bump aveMujicaThemeVersion before publishing."
-            exit 1
+            echo "Ave Mujica theme ${THEME_VERSION} is already published; leaving standalone theme release unchanged."
+            exit 0
           fi
 
           gh release upload "${THEME_RELEASE_TAG}" "${theme_asset}"
           gh release upload "${THEME_RELEASE_TAG}" "${theme_manifest}" --clobber
 
-  publish_plugin:
+  publish_stable:
     needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.should_publish_plugin == 'true'
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_stable == 'true'
     runs-on: ubuntu-latest
     env:
-      MARKETPLACE_CHANNELS: ${{ needs.verify.outputs.marketplace_channels }}
-      PUBLISH_TARGET: ${{ needs.verify.outputs.publish_target }}
-      PLUGIN_VERSION: ${{ needs.verify.outputs.plugin_version }}
+      STABLE_PLUGIN_VERSION: ${{ needs.verify.outputs.stable_plugin_version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -464,40 +345,78 @@ jobs:
             exit 1
           fi
 
-      - name: Publish plugin to Marketplace
+      - name: Publish stable plugin to Marketplace
+        env:
+          JB_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
+        run: ./gradlew --stacktrace --info publishPlugin -PcphVariant=stable
+
+      - name: Verify stable Marketplace visibility
+        run: |
+          set -euo pipefail
+          url="https://plugins.jetbrains.com/api/plugins/31535/updates?version=${STABLE_PLUGIN_VERSION}"
+          jq_filter='.[] | select(.version == env.STABLE_PLUGIN_VERSION and (.channel == "" or .channel == null))'
+          for attempt in {1..12}; do
+            response="$(curl --fail --silent --show-error --location "${url}")"
+            if STABLE_PLUGIN_VERSION="${STABLE_PLUGIN_VERSION}" jq -e "${jq_filter}" >/dev/null <<<"${response}"; then
+              echo "Marketplace default channel exposes CPH ${STABLE_PLUGIN_VERSION}."
+              exit 0
+            fi
+            echo "Marketplace default channel does not expose CPH ${STABLE_PLUGIN_VERSION} yet; retry ${attempt}/12."
+            sleep 10
+          done
+          echo "::error::Marketplace default channel does not expose CPH ${STABLE_PLUGIN_VERSION} after publishing."
+          exit 1
+
+  publish_eap:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_eap == 'true'
+    runs-on: ubuntu-latest
+    env:
+      EAP_PLUGIN_VERSION: ${{ needs.verify.outputs.eap_plugin_version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Marketplace token is configured
+        shell: bash
         env:
           JB_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -n "${MARKETPLACE_CHANNELS}" ]]; then
-            ./gradlew --stacktrace --info publishPlugin -PmarketplaceChannels="${MARKETPLACE_CHANNELS}"
-          else
-            ./gradlew --stacktrace --info publishPlugin
+          if [[ -z "${JB_MARKETPLACE_TOKEN:-}" ]]; then
+            echo "::error::Missing GitHub secret JB_MARKETPLACE_TOKEN."
+            exit 1
           fi
 
-      - name: Verify Marketplace visibility
-        shell: bash
+      - name: Publish EAP plugin to Marketplace
+        env:
+          JB_MARKETPLACE_TOKEN: ${{ secrets.JB_MARKETPLACE_TOKEN }}
+        run: ./gradlew --stacktrace --info publishPlugin -PcphVariant=eap -PmarketplaceChannels=eap
+
+      - name: Verify EAP Marketplace visibility
         run: |
           set -euo pipefail
-
-          channel="${MARKETPLACE_CHANNELS:-default}"
-          if [[ "${channel}" == "default" ]]; then
-            url="https://plugins.jetbrains.com/api/plugins/31535/updates?version=${PLUGIN_VERSION}"
-            jq_filter='.[] | select(.version == env.PLUGIN_VERSION and (.channel == "" or .channel == null))'
-          else
-            url="https://plugins.jetbrains.com/api/plugins/31535/updates?channel=${channel}"
-            jq_filter='.[] | select(.version == env.PLUGIN_VERSION and .channel == env.CHANNEL)'
-          fi
-
+          url="https://plugins.jetbrains.com/api/plugins/31535/updates?channel=eap"
+          jq_filter='.[] | select(.version == env.EAP_PLUGIN_VERSION and .channel == "eap")'
           for attempt in {1..12}; do
             response="$(curl --fail --silent --show-error --location "${url}")"
-            if CHANNEL="${channel}" PLUGIN_VERSION="${PLUGIN_VERSION}" jq -e "${jq_filter}" >/dev/null <<<"${response}"; then
-              echo "Marketplace ${channel} channel exposes CPH ${PLUGIN_VERSION}."
+            if EAP_PLUGIN_VERSION="${EAP_PLUGIN_VERSION}" jq -e "${jq_filter}" >/dev/null <<<"${response}"; then
+              echo "Marketplace eap channel exposes CPH ${EAP_PLUGIN_VERSION}."
               exit 0
             fi
-            echo "Marketplace ${channel} channel does not expose CPH ${PLUGIN_VERSION} yet; retry ${attempt}/12."
+            echo "Marketplace eap channel does not expose CPH ${EAP_PLUGIN_VERSION} yet; retry ${attempt}/12."
             sleep 10
           done
-
-          echo "::error::Marketplace ${channel} channel does not expose CPH ${PLUGIN_VERSION} after publishing."
+          echo "::error::Marketplace eap channel does not expose CPH ${EAP_PLUGIN_VERSION} after publishing."
           exit 1

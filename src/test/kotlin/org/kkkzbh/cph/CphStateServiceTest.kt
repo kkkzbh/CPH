@@ -82,6 +82,7 @@ class CphStateServiceTest {
                 compileSettings = CphGlobalCompileSettings(
                     cppStandard = CphCppStandard.CPP23,
                     compileOptions = "-O3",
+                    gccBitsPchEnabled = true,
                 ),
             ),
         )
@@ -89,6 +90,7 @@ class CphStateServiceTest {
         val compileSettings = service.getState().compileSettings
         assertEquals(CphCppStandard.CPP23, compileSettings.cppStandard)
         assertEquals("-O3", compileSettings.compileOptions)
+        assertEquals(true, compileSettings.gccBitsPchEnabled)
     }
 
     @Test
@@ -136,7 +138,9 @@ class CphStateServiceTest {
         assertEquals(0.5, ui.outputSplitRatio, 0.0)
         assertEquals(CPH_DEFAULT_EDITOR_FONT_SIZE, ui.editorFontSize)
         assertFalse(ui.noExpectedModeEnabled)
+        assertFalse(ui.showStderrEnabled)
         assertFalse(ui.confidentSubmitEnabled)
+        assertFalse(ui.parallelCaseRunEnabled)
     }
 
     @Test
@@ -247,7 +251,9 @@ class CphStateServiceTest {
                 ui = CphUiState(
                     editorFontSize = 18,
                     noExpectedModeEnabled = true,
+                    showStderrEnabled = true,
                     confidentSubmitEnabled = true,
+                    parallelCaseRunEnabled = true,
                 ),
             ),
         )
@@ -255,7 +261,9 @@ class CphStateServiceTest {
         val ui = service.getState().ui
         assertEquals(18, ui.editorFontSize)
         assertTrue(ui.noExpectedModeEnabled)
+        assertTrue(ui.showStderrEnabled)
         assertTrue(ui.confidentSubmitEnabled)
+        assertTrue(ui.parallelCaseRunEnabled)
     }
 
     @Test

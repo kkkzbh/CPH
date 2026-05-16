@@ -84,15 +84,23 @@ export const docPages: DocPage[] = [
 
 | 配置项 | 默认值 |
 | --- | --- |
-| 源代码根目录 | \`cf\` |
-| 路径模板 | \`\${contest}/\${index}.cpp\` |
+| 源代码根目录 | \`problems\` |
+| 路径模板 | \`\${source}/\${contest}/\${index}.cpp\` |
 | 监听端口 | \`10043\` |
 | 覆盖已有文件 | 关闭 |
 
 默认导入路径会类似：
 
 \`\`\`text
-cf/1/A.cpp
+problems/codeforces/1/A.cpp
+\`\`\`
+
+不同平台默认会落到各自目录：
+
+\`\`\`text
+problems/atcoder/abc300/D.cpp
+problems/luogu/problems/P1000.cpp
+problems/kattis/problems/hello.cpp
 \`\`\`
 
 ## 自定义路径模板

@@ -5,8 +5,10 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 
-internal const val CPH_DEFAULT_SOURCE_ROOT = "cf"
-internal const val CPH_DEFAULT_PATH_TEMPLATE = "\${contest}/\${index}.cpp"
+internal const val CPH_DEFAULT_SOURCE_ROOT = "problems"
+internal const val CPH_DEFAULT_PATH_TEMPLATE = "\${source}/\${contest}/\${index}.cpp"
+private const val CPH_LEGACY_DEFAULT_SOURCE_ROOT = "cf"
+private const val CPH_LEGACY_DEFAULT_PATH_TEMPLATE = "\${contest}/\${index}.cpp"
 internal const val CPH_DEFAULT_HTTP_PATH = "/"
 internal const val CPH_DEFAULT_PORT = 10043
 internal const val CPH_MIN_PORT = 1
@@ -39,9 +41,14 @@ internal class CphImportSettings : PersistentStateComponent<CphImportSettingsSta
     override fun getState(): CphImportSettingsState = state
 
     override fun loadState(state: CphImportSettingsState) {
+        val loadedSourceRoot = state.sourceRoot.ifBlank { CPH_DEFAULT_SOURCE_ROOT }
+        val loadedPathTemplate = state.pathTemplate.ifBlank { CPH_DEFAULT_PATH_TEMPLATE }
+        val isLegacyDefault =
+            loadedSourceRoot == CPH_LEGACY_DEFAULT_SOURCE_ROOT &&
+                loadedPathTemplate == CPH_LEGACY_DEFAULT_PATH_TEMPLATE
         this.state = state.copy(
-            sourceRoot = state.sourceRoot.ifBlank { CPH_DEFAULT_SOURCE_ROOT },
-            pathTemplate = state.pathTemplate.ifBlank { CPH_DEFAULT_PATH_TEMPLATE },
+            sourceRoot = if (isLegacyDefault) CPH_DEFAULT_SOURCE_ROOT else loadedSourceRoot,
+            pathTemplate = if (isLegacyDefault) CPH_DEFAULT_PATH_TEMPLATE else loadedPathTemplate,
             httpPath = normalizeHttpPath(state.httpPath),
             cppTemplate = state.cppTemplate.ifEmpty { CPH_DEFAULT_CPP_TEMPLATE },
             port = clampPort(state.port),

@@ -52,8 +52,9 @@ internal class CphPluginSettings : PersistentStateComponent<CphPluginSettingsSta
 
 internal object CphCodeforcesSubmitFeature {
     fun isEnabled(): Boolean =
-        CphPluginSettings.getInstance().state.codeforcesRemoteSubmitEnabled
+        CphBuildFeatures.codeforcesSubmitEnabled &&
+            CphPluginSettings.getInstance().state.codeforcesRemoteSubmitEnabled
 
     fun actionEnabled(pluginEnabled: Boolean, singleFileModeEnabled: Boolean): Boolean =
-        pluginEnabled && singleFileModeEnabled
+        CphBuildFeatures.codeforcesSubmitEnabled && pluginEnabled && singleFileModeEnabled
 }

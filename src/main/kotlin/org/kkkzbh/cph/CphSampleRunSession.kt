@@ -44,12 +44,14 @@ internal class CphSampleRunSession(
         cases: List<CphTestCase>,
         options: CphCaseRunOptions,
         indicator: ProgressIndicator,
+        onCaseStarted: (CphTestCase) -> Unit = {},
         onCaseCompleted: (CphCaseRunCompletion) -> Unit,
     ): CphSampleRunSummary {
         if (cases.isEmpty()) return CphSampleRunSummary(0, completedAllCases = true)
         val completionService = ExecutorCompletionService<Pair<CphTestCase, CphCaseResult>>(caseExecutor)
         cases.forEach { testCase ->
             completionService.submit {
+                runCatching { onCaseStarted(testCase) }
                 val result = runCatching {
                     runner.runPreparedCase(
                         preparedTarget,

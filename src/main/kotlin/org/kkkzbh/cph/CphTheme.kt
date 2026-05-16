@@ -107,13 +107,23 @@ internal object CphThemes {
 
     fun current(): CphThemePalette {
         val selectedThemeId = CphPluginSettings.getInstance().state.selectedThemeId
-        if (selectedThemeId == CphThemeId.AVE_MUJICA) {
-            val installed = runCatching {
+        val installed = if (selectedThemeId == CphThemeId.AVE_MUJICA) {
+            runCatching {
                 CphThemeAssetService.getInstance().isThemeInstalled(CphThemeId.AVE_MUJICA)
             }.getOrDefault(false)
-            if (!installed) return classic
+        } else {
+            false
         }
-        return palette(selectedThemeId)
+        return palette(effectiveThemeId(selectedThemeId, aveMujicaInstalled = installed))
+    }
+
+    internal fun effectiveThemeId(selectedThemeId: String?, aveMujicaInstalled: Boolean): String {
+        if (!CphBuildFeatures.aveMujicaThemeEnabled) return CphThemeId.CLASSIC
+        val normalizedThemeId = CphThemeId.normalize(selectedThemeId)
+        if (normalizedThemeId == CphThemeId.AVE_MUJICA && !aveMujicaInstalled) {
+            return CphThemeId.CLASSIC
+        }
+        return normalizedThemeId
     }
 
     fun palette(themeId: String?): CphThemePalette {

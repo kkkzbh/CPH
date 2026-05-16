@@ -45,21 +45,42 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     val interfaceLanguage = if (zh) "界面语言:" else "Interface language:"
     val runSettings = if (zh) "运行设置" else "Run Settings"
     val outputSettings = if (zh) "输出设置" else "Output Settings"
+    val general = if (zh) "常规" else "General"
+    val compileAndRun = if (zh) "编译与运行" else "Compile & Run"
+    val outputAndDisplay = if (zh) "输出与显示" else "Output & Display"
     val submitSettings = if (zh) "提交设置" else "Submit Settings"
     val shortcuts = if (zh) "快捷键" else "Shortcuts"
     val singleFileMode = if (zh) "纯单文件模式" else "Pure single-file mode"
     val ignoreTrailingWhitespace = if (zh) "忽略行尾空格和多余换行" else "Ignore trailing whitespace and extra newlines"
     val outputSplit = if (zh) "双栏显示标准输出 / 期望输出" else "Show Standard / Expected side by side"
     val noExpectedMode = if (zh) "无期望输出模式" else "No expected output mode"
+    val showStderr = if (zh) "显示标准错误" else "Show standard error"
     val confidentSubmit = if (zh) "自信模式：本地全 AC 后自动提交 CF" else "Confident mode: auto-submit to CF after local AC"
+    val parallelCaseRun = if (zh) "并行运行样例" else "Run cases in parallel"
+    val parallelCaseRunTooltip = if (zh) {
+        "并发运行可以更快看到多个测试点的结果是否正确，但抢占CPU可能会导致每个case消耗的时间存在较大误差"
+    } else {
+        "Parallel runs can show multiple case results faster, but CPU contention can make each case's runtime much less accurate."
+    }
+    val gccBitsPch = if (zh) "加速万能头编译" else "Accelerate bits/stdc++.h compilation"
+    val gccBitsPchTooltip = if (zh) {
+        "GCC编译器下，利用PCH预编译头加速万能头的编译速度"
+    } else {
+        "Use GCC PCH precompiled headers to speed up bits/stdc++.h compilation."
+    }
     val workingDirectory = if (zh) "工作目录配置:" else "Working directory:"
     val timeLimits = if (zh) "时间限制:" else "Time limit:"
     val cppStandard = if (zh) "C++ 标准:" else "C++ standard:"
     val compileOptions = if (zh) "编译选项:" else "Compile options:"
     val fontSize = if (zh) "字体大小:" else "Font size:"
+    val workMode = if (zh) "工作模式:" else "Work mode:"
+    val outputComparison = if (zh) "输出比较:" else "Output comparison:"
+    val displayMode = if (zh) "显示方式:" else "Display mode:"
+    val displayFontSize = if (zh) "显示字体大小:" else "Display font size:"
     val input = if (zh) "输入" else "Input"
     val expectedOutput = if (zh) "期望输出" else "Expected output"
     val standardOutput = if (zh) "标准输出" else "Standard output"
+    val standardError = if (zh) "标准错误" else "Standard error"
     val runAllShortcut = if (zh) "全局运行快捷键" else "Run all shortcut"
     val runSelectedShortcut = if (zh) "单CASE运行快捷键" else "Run case shortcut"
     val debugSelectedShortcut = if (zh) "单CASE调试快捷键" else "Debug case shortcut"
@@ -307,76 +328,44 @@ internal class CphImportSettingsTexts(private val language: CphUiLanguage) {
 
     val enableServer = if (zh) "启用 Competitive Companion 接收服务" else "Enable Competitive Companion receiver"
     val overwriteExisting = if (zh) "重新导入同一题目时覆盖已存在的源文件" else "Overwrite existing source files when re-importing the same problem"
+    val importReceiver = if (zh) "导入服务" else "Import Receiver"
+    val fileCreation = if (zh) "文件生成" else "File Creation"
     val port = if (zh) "监听端口：" else "Port:"
+    val status = if (zh) "状态：" else "Status:"
     val sourceRoot = if (zh) "源代码根目录（相对项目）：" else "Source root (relative to project):"
     val pathTemplate = if (zh) "路径模板：" else "Path template:"
-    val variables = if (zh) "可用变量：\${contest} \${index} \${name} \${slug} \${source}" else "Variables: \${contest} \${index} \${name} \${slug} \${source}"
+    val variables = if (zh) "路径模板变量" else "Path template variables"
     val cppTemplate = if (zh) "C++ 代码模板：" else "C++ code template:"
-    val codeforcesSubmit = if (zh) "Codeforces 一键提交" else "Codeforces One-click Submit"
-    val tutorialTitle = if (zh) "使用说明" else "Instructions"
-    val defaultPorts = if (zh) {
-        "Competitive Companion 默认端口列表已包含 10043，通常无需在浏览器侧改动。"
-    } else {
-        "Competitive Companion includes 10043 in its default port list, so browser-side changes are usually unnecessary."
-    }
-    val submitLanguageNote = if (zh) {
-        "提交语言自动跟随 CPH 工具窗的 C++ 标准；超过 Codeforces 当前支持上限时使用 GNU G++23。"
-    } else {
-        "The submit language follows the CPH tool-window C++ standard; values above the Codeforces ceiling use GNU G++23."
-    }
-    val submitClickNote = if (zh) {
-        "点击 CPH 工具栏提交按钮即提交（无确认框）：当前编辑器文件 -> 浏览器活动 CF Tab。需先在浏览器登录 CF 并安装 CPH Target Runner 浏览器扩展。"
-    } else {
-        "Click the CPH toolbar submit button to submit without confirmation: current editor file -> active browser CF tab. Log in to CF and install the CPH Target Runner browser extension first."
-    }
+    val cppTemplateGroup = if (zh) "C++ 代码模板" else "C++ Template"
 
     fun statusRunning(port: Int): String =
-        if (zh) "当前状态：运行中（监听 127.0.0.1:$port）" else "Status: running (listening on 127.0.0.1:$port)"
+        if (zh) "运行中：127.0.0.1:$port" else "Running: 127.0.0.1:$port"
 
     fun statusDisabled(): String =
-        if (zh) "当前状态：已禁用（勾选上方启用项以开启）" else "Status: disabled (enable the checkbox above to start)"
+        if (zh) "已禁用" else "Disabled"
 
     fun statusStopped(): String =
-        if (zh) "当前状态：未启动" else "Status: stopped"
+        if (zh) "未启动" else "Stopped"
 
     fun statusError(port: Int, message: String): String =
-        if (zh) "当前状态：启动失败（端口 $port）：$message" else "Status: failed to start (port $port): $message"
+        if (zh) "错误（端口 $port）：$message" else "Error (port $port): $message"
 
-    fun tutorial(): String {
-        return if (zh) {
-            """
-                1. 在 Chrome 应用商店搜索并安装 “Competitive Companion” 扩展。
-                2. 在 CLion 项目里勾选上方“启用 Competitive Companion 接收服务”，保存设置。
-                3. 打开任意 Codeforces 题面（例如 https://codeforces.com/contest/1/problem/A）。
-                4. 点击浏览器工具栏上 Competitive Companion 的绿色加号按钮。
-                5. 插件会自动：
-                   - 在 ${"$"}{源代码根目录}/${"$"}{contest}/${"$"}{index}.cpp 创建源文件并打开；
-                   - 注册一个单文件 (C/C++ File) 运行配置并设为当前运行目标；
-                   - 将题目样例写入 CPH 工具窗口中对应的 Cases。
-                6. 在 CPH 工具窗口点击运行全部即可一键评测。
-
-                常见问题：
-                - 浏览器点了没反应？检查上方“当前状态”是否为“运行中”，并确认 Competitive Companion 选项页 -> Custom ports 中包含此处显示的端口（默认列表已含 10043）。
-                - 端口被占用？换一个上方端口（例如 10044/10046/10047 等 CC 默认列表中的其它端口）。
-                - 多个 CLion 同时打开？请求会发送到最近聚焦的窗口。
-            """.trimIndent()
+    fun variableDescriptions(): List<Pair<String, String>> =
+        if (zh) {
+            listOf(
+                "\${contest}" to "比赛 ID 或题单来源标识",
+                "\${index}" to "题目编号，如 A、B1",
+                "\${name}" to "原始题目标题",
+                "\${slug}" to "适合作为文件名的题目标题",
+                "\${source}" to "小写题目来源平台：codeforces、atcoder、luogu、kattis 或 generic",
+            )
         } else {
-            """
-                1. Install the "Competitive Companion" extension from the Chrome Web Store.
-                2. In the CLion project, enable the receiver checkbox above and apply settings.
-                3. Open any Codeforces problem page, for example https://codeforces.com/contest/1/problem/A.
-                4. Click the green plus button in the Competitive Companion browser toolbar.
-                5. The plugin will:
-                   - create and open a source file at ${"$"}{source root}/${"$"}{contest}/${"$"}{index}.cpp;
-                   - register a single-file (C/C++ File) run configuration and select it as the current target;
-                   - write the problem samples into the matching CPH tool-window cases.
-                6. Click Run All in the CPH tool window to test everything.
-
-                Troubleshooting:
-                - Browser click did nothing? Check that the status above is running and that the Competitive Companion options page -> Custom ports includes this port. The default list already includes 10043.
-                - Port in use? Choose another port above, such as 10044, 10046, or 10047 from the CC default list.
-                - Multiple CLion windows open? Requests go to the most recently focused window.
-            """.trimIndent()
+            listOf(
+                "\${contest}" to "Contest ID or problem-set source identifier",
+                "\${index}" to "Problem index, such as A or B1",
+                "\${name}" to "Original problem title",
+                "\${slug}" to "Problem title normalized for file names",
+                "\${source}" to "Lowercase source platform: codeforces, atcoder, luogu, kattis, or generic",
+            )
         }
-    }
 }

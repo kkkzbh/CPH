@@ -21,6 +21,7 @@ enum class CphCppStandard(
 data class CphCompileSettings(
     val cppStandard: CphCppStandard = CphCppStandard.FOLLOW_TARGET,
     val compileOptions: String = "",
+    val gccBitsPchEnabled: Boolean = false,
 ) {
     fun hasOverrides(): Boolean = cppStandard != CphCppStandard.FOLLOW_TARGET || compileOptions.isNotBlank()
 }
@@ -31,6 +32,9 @@ internal object CphCompileOptions {
         val merged = mergeCompilerArgs(original, additionalArgs(settings), settings.cppStandard)
         return merged.joinToString(" ") { quoteShellLike(it) }
     }
+
+    fun renderCompilerOptions(args: List<String>): String =
+        args.joinToString(" ") { quoteShellLike(it) }
 
     fun additionalArgs(settings: CphCompileSettings): List<String> {
         val additional = parseShellLike(settings.compileOptions)

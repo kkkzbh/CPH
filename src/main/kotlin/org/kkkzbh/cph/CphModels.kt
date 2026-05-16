@@ -60,9 +60,14 @@ data class CphTargetCases(
 data class CphGlobalCompileSettings(
     var cppStandard: CphCppStandard = CphCppStandard.FOLLOW_TARGET,
     var compileOptions: String = "",
+    var gccBitsPchEnabled: Boolean = false,
 ) {
     fun toCompileSettings(): CphCompileSettings {
-        return CphCompileSettings(cppStandard = cppStandard, compileOptions = compileOptions)
+        return CphCompileSettings(
+            cppStandard = cppStandard,
+            compileOptions = compileOptions,
+            gccBitsPchEnabled = gccBitsPchEnabled,
+        )
     }
 }
 
@@ -74,7 +79,9 @@ data class CphUiState(
     var outputSplitRatio: Double = 0.5,
     var editorFontSize: Int = CPH_DEFAULT_EDITOR_FONT_SIZE,
     var noExpectedModeEnabled: Boolean = false,
+    var showStderrEnabled: Boolean = false,
     var confidentSubmitEnabled: Boolean = false,
+    var parallelCaseRunEnabled: Boolean = false,
     var settingsReturnHintShown: Boolean = false,
 )
 
