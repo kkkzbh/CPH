@@ -7,12 +7,12 @@
         Manage sample cases per CMake target, run them quickly, compare outputs, and inspect mismatched lines.
     ]]></description>
     <change-notes><![CDATA[
-        <h3>1.2.0</h3>
+        <h3>1.2.1</h3>
         <ul>
-          <li>Add GCC precompiled-header acceleration for <code>#include &lt;bits/stdc++.h&gt;</code> in CLion C/C++ File configurations.</li>
-          <li>Use CLion's selected toolchain to resolve the real compiler, with cached header probes for faster repeated runs.</li>
-          <li>Keep PCH optional and safe: unsupported compilers or missing headers now fall back to the normal CLion build path.</li>
-          <li>Improve C/C++ File build recovery, compile diagnostics, and sample-run process handling.</li>
+          <li>Enhance the existing "accelerate bits/stdc++.h" option for GCC toolchains.</li>
+          <li>Use GCC 16+ standard-library GCM cache to accelerate <code>#include &lt;bits/stdc++.h&gt;</code>, while still allowing code to use <code>import std</code>.</li>
+          <li>Keep GCC 15 and below on the existing PCH acceleration path.</li>
+          <li>Add route diagnostics for std-module/PCH hits and reduce GCC 16+ hot-path preparation overhead with cached probes.</li>
         </ul>
     ]]></change-notes>
 

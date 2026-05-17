@@ -29,37 +29,59 @@ internal class CphGccPchService @JvmOverloads constructor(
             CphGccPchResult(args, status, elapsedMillis(startedAt), summary)
 
         if (!compileSettings.gccBitsPchEnabled) return finish(CphPchStatus.OFF)
-        if (!sourceFileIncludesBitsHeader(compiler.sourceFile)) {
-            return finish(CphPchStatus.SKIPPED, summary = "no bits include")
+        val sourceUsage = sourceFileStdAccelerationUsage(compiler.sourceFile)
+        if (!sourceUsage.usesBitsHeader && !sourceUsage.usesImportStd) {
+            return finish(CphPchStatus.SKIPPED, summary = "skipped(no bits include/import std)")
         }
 
         return runCatching {
             val resolvedCompiler = resolveCompilerExecutable(compiler.compilerPath, compiler.environment)
-                ?: return finish(CphPchStatus.SKIPPED, summary = "compiler not executable: ${compiler.compilerPath}")
+                ?: return finish(CphPchStatus.SKIPPED, summary = "skipped(compiler not executable: ${compiler.compilerPath})")
             val probeInput = probeInput(resolvedCompiler, compiler, compileSettings)
-                ?: return finish(CphPchStatus.SKIPPED, summary = "compiler not executable: ${resolvedCompiler.path}")
+                ?: return finish(CphPchStatus.SKIPPED, summary = "skipped(compiler not executable: ${resolvedCompiler.path})")
             val probe = probeCache.resolve(probeInput) {
                 coldProbeBitsHeader(resolvedCompiler, compiler.environment, compileSettings)
             }
-            when (probe) {
-                is CphBitsHeaderProbeResolution.Found -> {
-                    val pch = ensurePch(
+            if (probe is CphBitsHeaderProbeResolution.Missing) {
+                return finish(CphPchStatus.SKIPPED, summary = "skipped(${probe.summary})")
+            }
+            val foundProbe = probe as CphBitsHeaderProbeResolution.Found
+            val compilerName = File(resolvedCompiler.path).name
+            val majorVersion = gccMajorVersion(foundProbe.compilerVersion)
+                ?: return finish(CphPchStatus.SKIPPED, summary = "skipped(no gcc major version: $compilerName)")
+            if (majorVersion >= GCC_STD_MODULE_MIN_MAJOR) {
+                val stdModule = runCatching {
+                    ensureStdModule(
                         compiler = resolvedCompiler,
                         environment = compiler.environment,
-                        compilerVersion = probe.compilerVersion,
-                        realHeader = probe.header,
+                        compilerVersion = foundProbe.compilerVersion,
+                        realHeader = foundProbe.header,
                         compileSettings = compileSettings,
-                        probeSummary = probe.summary,
+                        probeInput = probeInput,
+                        probeSummary = foundProbe.summary,
                     )
-                    val status = if (pch.built) CphPchStatus.BUILT else CphPchStatus.HIT
-                    finish(status, args = listOf("-I", pch.dir.absolutePath), summary = pch.summary)
+                }.getOrElse {
+                    error("std-module preparation failed: ${it.message ?: it.javaClass.simpleName}")
                 }
-                is CphBitsHeaderProbeResolution.Missing -> {
-                    finish(CphPchStatus.SKIPPED, summary = probe.summary)
+                val status = if (stdModule.built) CphPchStatus.BUILT else CphPchStatus.HIT
+                finish(status, args = stdModule.args, summary = stdModule.summary)
+            } else {
+                if (sourceUsage.usesImportStd) {
+                    error("import std requires GCC16+ std module support.")
                 }
+                val pch = ensurePch(
+                    compiler = resolvedCompiler,
+                    environment = compiler.environment,
+                    compilerVersion = foundProbe.compilerVersion,
+                    realHeader = foundProbe.header,
+                    compileSettings = compileSettings,
+                    probeSummary = foundProbe.summary,
+                )
+                val status = if (pch.built) CphPchStatus.BUILT else CphPchStatus.HIT
+                finish(status, args = listOf("-I", pch.dir.absolutePath), summary = pch.summary)
             }
         }.onFailure {
-            log.warn("CPH GCC bits/stdc++.h PCH is disabled for '${compiler.sourceFile.absolutePath}': ${it.message}", it)
+            log.warn("CPH GCC bits/stdc++.h acceleration failed for '${compiler.sourceFile.absolutePath}': ${it.message}", it)
         }.getOrElse {
             finish(CphPchStatus.FAILED, summary = it.message ?: it.javaClass.simpleName)
         }
@@ -69,9 +91,10 @@ internal class CphGccPchService @JvmOverloads constructor(
         compiler: CompilerExecutable,
         environment: CPPEnvironment,
         compileSettings: CphCompileSettings,
+        compilerVersion: String? = null,
     ): CphBitsHeaderProbeResolution {
         val compilerName = File(compiler.path).name
-        val version = compilerVersion(compiler.path, environment)
+        val version = compilerVersion ?: compilerVersion(compiler.path, environment)
             ?: return CphBitsHeaderProbeResolution.Missing("no compiler version: $compilerName")
         if (!isGccVersion(version)) {
             return CphBitsHeaderProbeResolution.Missing("not gcc: $compilerName")
@@ -136,7 +159,96 @@ internal class CphGccPchService @JvmOverloads constructor(
     }
 
     private fun pchSummary(compiler: CompilerExecutable, pchDir: File, probeSummary: String): String =
-        "${File(compiler.path).name}:${pchDir.name} | $probeSummary | compiler: ${compiler.summary}"
+        "pch: ${File(compiler.path).name}:${pchDir.name} | $probeSummary | compiler: ${compiler.summary}"
+
+    private fun ensureStdModule(
+        compiler: CompilerExecutable,
+        environment: CPPEnvironment,
+        compilerVersion: String,
+        realHeader: File,
+        compileSettings: CphCompileSettings,
+        probeInput: CphBitsHeaderProbeInput,
+        probeSummary: String,
+    ): StdModuleCache {
+        val cacheRoot = File(
+            PathManager.getSystemPath(),
+            "cph-target-runner/std-modules/${stdModuleKey(probeInput, compilerVersion, realHeader)}",
+        )
+        if (!cacheRoot.isDirectory && !cacheRoot.mkdirs()) {
+            error("Cannot create std module cache directory: ${cacheRoot.absolutePath}")
+        }
+        val mapper = writeStdModuleMapper(cacheRoot, realHeader)
+        val args = stdModuleArgs(mapper)
+        if (stdModuleCmisReady(cacheRoot, realHeader)) {
+            return StdModuleCache(
+                args = args,
+                built = false,
+                summary = stdModuleSummary(compiler, cacheRoot, "cache hit | $probeSummary"),
+            )
+        }
+
+        val sourceFile = writeStdModuleProbeSource(cacheRoot)
+        val command = buildList {
+            add(compiler.path)
+            addAll(CphCompileOptions.additionalArgs(compileSettings))
+            compileSettings.cppStandard.flag?.let(::add)
+            addAll(args)
+            add("--compile-std-module")
+            add(sourceFile.absolutePath)
+            add("-o")
+            add(File(cacheRoot, "cph_std_module_probe").absolutePath)
+        }
+        val result = processRunner.run(command, STD_MODULE_BUILD_TIMEOUT_SECONDS, environment = environment)
+        if (result.exitCode != 0 || !stdModuleCmisReady(cacheRoot, realHeader)) {
+            error(
+                "std-module build failed with exit code ${result.exitCode}: " +
+                    (result.output.lineSequence().firstOrNull { it.isNotBlank() } ?: "no compiler output"),
+            )
+        }
+        return StdModuleCache(
+            args = args,
+            built = true,
+            summary = stdModuleSummary(compiler, cacheRoot, "built | $probeSummary"),
+        )
+    }
+
+    private fun writeStdModuleProbeSource(cacheRoot: File): File {
+        val source = File(cacheRoot, "cph_std_module_probe.cpp")
+        val text = "int main() { return 0; }\n"
+        if (!source.isFile || source.readText() != text) {
+            source.writeText(text)
+        }
+        return source
+    }
+
+    private fun writeStdModuleMapper(cacheRoot: File, realHeader: File): File {
+        val mapper = File(cacheRoot, "mapper.txt")
+        val text = buildString {
+            appendLine("${'$'}root ${cacheRoot.absolutePath}")
+            appendLine("std std.gcm")
+            appendLine("std.compat std.compat.gcm")
+            appendLine("${realHeader.absolutePath} ${stdModuleHeaderCmiPath(realHeader)}")
+        }
+        if (!mapper.isFile || mapper.readText() != text) {
+            mapper.writeText(text)
+        }
+        return mapper
+    }
+
+    private fun stdModuleCmisReady(cacheRoot: File, realHeader: File): Boolean {
+        if (!File(cacheRoot, "std.gcm").isFile) return false
+        if (!File(cacheRoot, "std.compat.gcm").isFile) return false
+        return File(cacheRoot, stdModuleHeaderCmiPath(realHeader)).isFile
+    }
+
+    private fun stdModuleArgs(mapper: File): List<String> =
+        listOf("-fmodules", "-fmodule-mapper=${mapper.absolutePath}")
+
+    private fun stdModuleHeaderCmiPath(realHeader: File): String =
+        realHeader.absolutePath.replace('\\', '/').removePrefix("/") + ".gcm"
+
+    private fun stdModuleSummary(compiler: CompilerExecutable, cacheRoot: File, status: String): String =
+        "std-module: ${cacheRoot.name} | $status | compiler: ${compiler.summary}"
 
     private fun resolveCompilerExecutable(
         compilerPath: String,
@@ -210,6 +322,17 @@ internal class CphGccPchService @JvmOverloads constructor(
         val summary: String,
     )
 
+    private data class StdModuleCache(
+        val args: List<String>,
+        val built: Boolean,
+        val summary: String,
+    )
+
+    internal data class SourceStdAccelerationUsage(
+        val usesBitsHeader: Boolean,
+        val usesImportStd: Boolean,
+    )
+
     private data class CompilerExecutable(
         val path: String,
         val summary: String,
@@ -219,14 +342,30 @@ internal class CphGccPchService @JvmOverloads constructor(
         private const val COMPILER_VERSION_TIMEOUT_SECONDS = 2L
         private const val HEADER_PROBE_TIMEOUT_SECONDS = 5L
         private const val PCH_BUILD_TIMEOUT_SECONDS = 20L
+        private const val STD_MODULE_BUILD_TIMEOUT_SECONDS = 30L
+        private const val GCC_STD_MODULE_MIN_MAJOR = 16
         private val BITS_HEADER_INCLUDE = Regex("""(?m)^\s*#\s*include\s*[<"]bits/stdc\+\+\.h[>"]""")
+        private val STD_MODULE_IMPORT = Regex("""^\s*import\s+std(?:\.compat)?\s*;""")
 
         fun getInstance(project: Project): CphGccPchService = project.service()
 
         fun sourceFileIncludesBitsHeader(sourceFile: File): Boolean =
             sourceIncludesBitsHeader(runCatching { sourceFile.readText() }.getOrDefault(""))
 
+        fun sourceFileStdAccelerationUsage(sourceFile: File): SourceStdAccelerationUsage =
+            sourceStdAccelerationUsage(runCatching { sourceFile.readText() }.getOrDefault(""))
+
         fun sourceIncludesBitsHeader(source: String): Boolean {
+            return sourceStdAccelerationUsage(source).usesBitsHeader
+        }
+
+        fun sourceUsesImportStd(source: String): Boolean {
+            return sourceStdAccelerationUsage(source).usesImportStd
+        }
+
+        fun sourceStdAccelerationUsage(source: String): SourceStdAccelerationUsage {
+            var usesBitsHeader = false
+            var usesImportStd = false
             var inBlockComment = false
             source.lineSequence().forEach { line ->
                 val visible = StringBuilder()
@@ -254,14 +393,27 @@ internal class CphGccPchService @JvmOverloads constructor(
                         }
                     }
                 }
-                if (BITS_HEADER_INCLUDE.containsMatchIn(visible.toString())) return true
+                val visibleLine = visible.toString()
+                if (BITS_HEADER_INCLUDE.containsMatchIn(visibleLine)) usesBitsHeader = true
+                if (STD_MODULE_IMPORT.containsMatchIn(visibleLine)) usesImportStd = true
+                if (usesBitsHeader && usesImportStd) {
+                    return SourceStdAccelerationUsage(usesBitsHeader = true, usesImportStd = true)
+                }
             }
-            return false
+            return SourceStdAccelerationUsage(usesBitsHeader = usesBitsHeader, usesImportStd = usesImportStd)
         }
 
         fun isGccVersion(version: String): Boolean {
             val lower = version.lowercase()
             return "gcc" in lower || "g++" in lower || "free software foundation" in lower
+        }
+
+        fun gccMajorVersion(version: String): Int? {
+            if (!isGccVersion(version)) return null
+            val firstLine = version.lineSequence().firstOrNull().orEmpty()
+            val match = Regex("""\b(\d+)\.\d+(?:\.\d+)?\b""").find(firstLine)
+                ?: Regex("""(?:GCC|g\+\+)[^\d]*(\d+)""", RegexOption.IGNORE_CASE).find(firstLine)
+            return match?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
 
         fun pchKey(
@@ -293,6 +445,24 @@ internal class CphGccPchService @JvmOverloads constructor(
                 sha256(input.toolchainEnvironment),
                 input.standardFlag,
                 input.compileOptions,
+            ).joinToString("\u0000")
+            return sha256(raw)
+        }
+
+        fun stdModuleKey(input: CphBitsHeaderProbeInput, compilerVersion: String, realHeader: File? = null): String {
+            val raw = listOf(
+                "gcc-std-module-v1",
+                input.compilerPath,
+                input.compilerLastModified.toString(),
+                input.compilerLength.toString(),
+                input.toolchainName,
+                sha256(input.toolchainEnvironment),
+                compilerVersion.lineSequence().firstOrNull().orEmpty(),
+                input.standardFlag,
+                input.compileOptions,
+                realHeader?.absolutePath.orEmpty(),
+                realHeader?.lastModified()?.toString().orEmpty(),
+                realHeader?.length()?.toString().orEmpty(),
             ).joinToString("\u0000")
             return sha256(raw)
         }

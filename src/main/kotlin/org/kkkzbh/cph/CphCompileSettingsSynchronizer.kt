@@ -58,8 +58,12 @@ internal object CphCppFileCompilerOptionsSync {
         )
     }
 
-    fun withoutManagedPchArgs(compilerOptions: String): String {
+    fun withoutManagedGccAccelArgs(compilerOptions: String): String {
         val args = CphCompileOptions.parseShellLike(compilerOptions)
+        val hasManagedStdModuleMapper = args.withIndex().any { (index, arg) ->
+            isManagedStdModuleMapperArg(arg) ||
+                (arg == "-fmodule-mapper" && args.getOrNull(index + 1)?.let(::isManagedStdModuleMapperValue) == true)
+        }
         val filtered = mutableListOf<String>()
         var index = 0
         while (index < args.size) {
@@ -69,6 +73,18 @@ internal object CphCppFileCompilerOptionsSync {
                 continue
             }
             if (arg.startsWith("-I") && isManagedPchPath(arg.removePrefix("-I"))) {
+                index += 1
+                continue
+            }
+            if (arg == "-fmodules" && hasManagedStdModuleMapper) {
+                index += 1
+                continue
+            }
+            if (arg == "-fmodule-mapper" && index + 1 < args.size && isManagedStdModuleMapperValue(args[index + 1])) {
+                index += 2
+                continue
+            }
+            if (isManagedStdModuleMapperArg(arg)) {
                 index += 1
                 continue
             }
@@ -82,6 +98,14 @@ internal object CphCppFileCompilerOptionsSync {
         val normalized = path.replace('\\', '/')
         return normalized.contains("/cph-target-runner/pch/") ||
             normalized.contains("cph-target-runnerpch")
+    }
+
+    private fun isManagedStdModuleMapperArg(arg: String): Boolean =
+        arg.startsWith("-fmodule-mapper=") && isManagedStdModuleMapperValue(arg.substringAfter('='))
+
+    private fun isManagedStdModuleMapperValue(value: String): Boolean {
+        val normalized = value.replace('\\', '/')
+        return normalized.contains("cph-target-runner/std-modules/")
     }
 }
 
@@ -145,7 +169,7 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         val access = cppFileCompilerOptionsAccess(settings)
         val current = access.get()
         val baseCurrent = if (waitForTarget && compileSettings.gccBitsPchEnabled) {
-            CphCppFileCompilerOptionsSync.withoutManagedPchArgs(current)
+            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs(current)
         } else {
             current
         }
@@ -170,7 +194,7 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
             return CphCompileSyncResult(
                 changed = changed,
                 pchStatus = if (compileSettings.gccBitsPchEnabled) CphPchStatus.SKIPPED else CphPchStatus.OFF,
-                pchMessage = if (compileSettings.gccBitsPchEnabled) "deferred" else "",
+                pchMessage = if (compileSettings.gccBitsPchEnabled) "bits accel: deferred" else "",
             )
         }
 
@@ -202,15 +226,16 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
                 pchMessage = "no source",
             )
         }
-        if (!CphGccPchService.sourceFileIncludesBitsHeader(sourceFile)) {
+        val sourceUsage = CphGccPchService.sourceFileStdAccelerationUsage(sourceFile)
+        if (!sourceUsage.usesBitsHeader && !sourceUsage.usesImportStd) {
             return CphCompileSyncResult(
                 changed = changed,
                 pchStatus = CphPchStatus.SKIPPED,
-                pchMessage = "no bits include",
+                pchMessage = "skipped(no bits include/import std)",
             )
         }
         val compiler = CphCppFileCompilerResolver(project).resolve(configuration)
-        val pch = when (compiler) {
+        val accel = when (compiler) {
             is CphCppFileCompilerResolution.Ready -> CphGccPchService.getInstance(project).compilerArgs(
                 compiler = compiler,
                 compileSettings = compileSettings,
@@ -221,10 +246,19 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
                 summary = compiler.summary,
             )
         }
+        if (accel.status == CphPchStatus.FAILED) {
+            return CphCompileSyncResult(
+                changed = changed,
+                error = accel.summary,
+                managedArgsMillis = accel.elapsedMillis,
+                pchStatus = accel.status,
+                pchMessage = accel.summary,
+            )
+        }
         val fullUpdate = CphCppFileCompilerOptionsSync.compute(
             current = access.get(),
             settings = compileSettings,
-            managedArgs = pch.args,
+            managedArgs = accel.args,
         )
         if (fullUpdate.changed) {
             runOnEdt {
@@ -236,9 +270,9 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         }
         return CphCompileSyncResult(
             changed = changed,
-            managedArgsMillis = pch.elapsedMillis,
-            pchStatus = pch.status,
-            pchMessage = pch.summary,
+            managedArgsMillis = accel.elapsedMillis,
+            pchStatus = accel.status,
+            pchMessage = accel.summary,
         )
     }
 

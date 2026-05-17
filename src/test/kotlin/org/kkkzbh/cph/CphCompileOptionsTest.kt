@@ -155,27 +155,52 @@ class CphCompileOptionsTest {
     fun cppFileCompilerOptionsSyncStripsOnlyManagedPchArgs() {
         assertEquals(
             "-O2 -I /tmp/keep -Wall",
-            CphCppFileCompilerOptionsSync.withoutManagedPchArgs(
+            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs(
                 "-O2 -I /tmp/keep -I /home/u/.cache/JetBrains/CLion/cph-target-runner/pch/abc -Wall",
             ),
         )
         assertEquals(
             "-O2",
-            CphCppFileCompilerOptionsSync.withoutManagedPchArgs(
+            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs(
                 "-O2 -IC:\\Users\\u\\AppData\\Local\\JetBrains\\CLion\\cph-target-runner\\pch\\abc",
             ),
         )
     }
 
     @Test
-    fun gccPchDetectsBitsHeaderAndGccVersion() {
+    fun cppFileCompilerOptionsSyncStripsManagedStdModuleArgs() {
+        assertEquals(
+            "-O2 -Wall",
+            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs(
+                "-O2 -fmodules -fmodule-mapper=/home/u/.cache/JetBrains/CLion/cph-target-runner/std-modules/abc/mapper.txt -Wall",
+            ),
+        )
+        assertEquals(
+            "-O2 -fmodules",
+            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs("-O2 -fmodules"),
+        )
+    }
+
+    @Test
+    fun gccPchDetectsBitsHeaderImportStdAndGccVersion() {
         assertEquals(true, CphGccPchService.sourceIncludesBitsHeader("#include <bits/stdc++.h>\n"))
         assertEquals(true, CphGccPchService.sourceIncludesBitsHeader(" # include \"bits/stdc++.h\"\n"))
         assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("#include <vector>\n"))
         assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("// #include <bits/stdc++.h>\n"))
         assertEquals(false, CphGccPchService.sourceIncludesBitsHeader("/*\n#include <bits/stdc++.h>\n*/\n"))
+        assertEquals(true, CphGccPchService.sourceUsesImportStd("import std;\n"))
+        assertEquals(true, CphGccPchService.sourceUsesImportStd(" import std.compat;\n"))
+        assertEquals(false, CphGccPchService.sourceUsesImportStd("// import std;\n"))
+        assertEquals(false, CphGccPchService.sourceUsesImportStd("/* import std; */\n"))
         assertEquals(true, CphGccPchService.isGccVersion("g++ (GCC) 15.1.1"))
         assertEquals(false, CphGccPchService.isGccVersion("clang version 19.1.0"))
+    }
+
+    @Test
+    fun gccMajorVersionParsesGccAndRejectsClang() {
+        assertEquals(16, CphGccPchService.gccMajorVersion("g++ (GCC) 16.1.1 20260501 (Red Hat 16.1.1-1)"))
+        assertEquals(15, CphGccPchService.gccMajorVersion("g++.exe (Rev2, Built by MSYS2 project) 15.2.0"))
+        assertNull(CphGccPchService.gccMajorVersion("clang version 19.1.0"))
     }
 
     @Test
@@ -257,6 +282,31 @@ class CphCompileOptionsTest {
             base.copy(compileOptions = "-O0"),
         ).forEach {
             assertEquals(false, baseKey == CphGccPchService.probeKey(it))
+        }
+    }
+
+    @Test
+    fun gccStdModuleKeyChangesWithCompilerToolchainStandardOptionsAndVersion() {
+        val base = CphBitsHeaderProbeInput(
+            compilerPath = "/usr/bin/g++",
+            compilerLastModified = 1L,
+            compilerLength = 2L,
+            toolchainName = "Default",
+            toolchainEnvironment = "PATH=/usr/bin",
+            standardFlag = "-std=c++26",
+            compileOptions = "-O2",
+        )
+        val baseKey = CphGccPchService.stdModuleKey(base, "g++ (GCC) 16.1.1")
+
+        listOf(
+            CphGccPchService.stdModuleKey(base.copy(compilerPath = "/opt/gcc/bin/g++"), "g++ (GCC) 16.1.1"),
+            CphGccPchService.stdModuleKey(base.copy(compilerLastModified = 3L), "g++ (GCC) 16.1.1"),
+            CphGccPchService.stdModuleKey(base.copy(toolchainEnvironment = "PATH=/opt/gcc/bin"), "g++ (GCC) 16.1.1"),
+            CphGccPchService.stdModuleKey(base.copy(standardFlag = "-std=c++23"), "g++ (GCC) 16.1.1"),
+            CphGccPchService.stdModuleKey(base.copy(compileOptions = "-O0"), "g++ (GCC) 16.1.1"),
+            CphGccPchService.stdModuleKey(base, "g++ (GCC) 16.2.0"),
+        ).forEach {
+            assertEquals(false, baseKey == it)
         }
     }
 

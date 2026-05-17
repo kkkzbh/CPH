@@ -625,8 +625,9 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         parallelCaseRunEnabled.toolTipText = text.parallelCaseRunTooltip
         parallelCaseRunHelp.toolTipText = text.parallelCaseRunTooltip
         gccBitsPchEnabled.text = text.gccBitsPch
-        gccBitsPchEnabled.toolTipText = text.gccBitsPchTooltip
-        gccBitsPchHelp.toolTipText = text.gccBitsPchTooltip
+        val gccBitsTooltip = htmlTooltip(text.gccBitsPchTooltip)
+        gccBitsPchEnabled.toolTipText = gccBitsTooltip
+        gccBitsPchHelp.toolTipText = gccBitsTooltip
         runSelectedCaseButton.text = runSelectedButtonText()
         debugSelectedCaseButton.text = text.debug
         setTitleActionButtonText(inputCopyButton, text.copy)
@@ -664,6 +665,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             refreshSettingsHelpButton()
             refreshSubmitButtonTooltip()
         }
+    }
+
+    private fun htmlTooltip(text: String): String {
+        val escaped = text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        return "<html>${escaped.replace("\n", "<br>")}</html>"
     }
 
     private fun buildTop(): JComponent {
@@ -3303,8 +3312,8 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             CphUiText.formatDuration(prepareDiagnostics.buildMillis)
         }
         val cache = if (prepareDiagnostics.buildSkippedByCphCache) "hit" else "miss"
-        return "$prefix ${CphUiText.formatDuration(totalMillis)} | PCH: $pch | " +
-            "PCH准备 ${CphUiText.formatDuration(syncResult.managedArgsMillis)} | " +
+        return "$prefix ${CphUiText.formatDuration(totalMillis)} | bits accel: $pch | " +
+            "加速准备 ${CphUiText.formatDuration(syncResult.managedArgsMillis)} | " +
             "CLion构建 $build | CPH缓存 $cache"
     }
 
