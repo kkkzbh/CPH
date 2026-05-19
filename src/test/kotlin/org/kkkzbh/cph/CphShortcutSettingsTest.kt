@@ -111,6 +111,23 @@ class CphShortcutSettingsTest {
     }
 
     @Test
+    fun disabledCphDoesNotMatchConfiguredShortcut() {
+        val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK)
+        val state = CphShortcutSettingsState(
+            runAllShortcut = CphShortcutMatcher.toStorageString(keyStroke),
+        )
+
+        assertNull(
+            CphShortcutMatcher.actionFor(
+                keyStroke,
+                state,
+                fromShortcutInput = false,
+                cphEnabled = false,
+            ),
+        )
+    }
+
+    @Test
     fun configuredSubmitShortcutMatchesAction() {
         val keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK)
         val state = CphShortcutSettingsState(

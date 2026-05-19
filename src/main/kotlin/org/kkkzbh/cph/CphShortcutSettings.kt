@@ -35,9 +35,10 @@ internal object CphShortcutMatcher {
         keyStroke: KeyStroke?,
         state: CphShortcutSettingsState,
         fromShortcutInput: Boolean,
+        cphEnabled: Boolean = true,
         codeforcesSubmitEnabled: Boolean = true,
     ): CphShortcutAction? {
-        if (fromShortcutInput || keyStroke == null) return null
+        if (!cphEnabled || fromShortcutInput || keyStroke == null) return null
         return configuredShortcuts(state, codeforcesSubmitEnabled).firstOrNull { it.second == keyStroke }?.first
     }
 
