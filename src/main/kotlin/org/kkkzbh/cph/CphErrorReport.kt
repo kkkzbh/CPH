@@ -1,11 +1,9 @@
 package org.kkkzbh.cph
 
 import com.intellij.ide.BrowserUtil
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -172,9 +170,7 @@ internal object CphErrorReportBuilder {
     }
 
     private fun pluginVersion(): String {
-        return runCatching {
-            PluginManagerCore.getPlugin(PluginId.getId(CPH_PLUGIN_ID))?.version
-        }.getOrNull() ?: "unknown"
+        return CphBuildFeatures.pluginVersion
     }
 
     private fun ideVersion(): String {
@@ -280,5 +276,4 @@ internal class CphReportErrorAction(
     }
 }
 
-internal const val CPH_PLUGIN_ID = "org.kkkzbh.cph"
 private const val CPH_GITHUB_ISSUE_URL = "https://github.com/kkkzbh/CPH/issues/new"

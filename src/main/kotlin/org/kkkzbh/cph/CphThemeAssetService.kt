@@ -1,15 +1,13 @@
 package org.kkkzbh.cph
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.application.PathManager
 import com.intellij.util.io.HttpRequests
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -477,7 +475,7 @@ internal class CphThemeAssetService {
         CphVersionComparator.compare(currentPluginVersion(), manifest.minPluginVersion) >= 0
 
     private fun currentPluginVersion(): String =
-        PluginManagerCore.getPlugin(PluginId.getId(CPH_PLUGIN_ID))?.version ?: "0.0.0"
+        CphBuildFeatures.pluginVersion
 
     private fun defaultThemesRoot(): Path =
         PathManager.getConfigDir().resolve("cph").resolve("themes")
@@ -493,7 +491,6 @@ internal class CphThemeAssetService {
         private const val AVE_MUJICA_MANIFEST_URL =
             "https://github.com/kkkzbh/CPH/releases/download/theme-avemujica/cph-theme-avemujica.json"
         private const val HTTP_TIMEOUT_MILLIS = 15_000
-        private const val CPH_PLUGIN_ID = "org.kkkzbh.cph"
         private const val CPH_NOTIFICATION_GROUP_ID = "CPH Target Runner"
 
         fun aveMujicaManifestUrls(): List<String> =

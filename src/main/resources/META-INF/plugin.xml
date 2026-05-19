@@ -7,12 +7,10 @@
         Manage sample cases per CMake target, run them quickly, compare outputs, and inspect mismatched lines.
     ]]></description>
     <change-notes><![CDATA[
-        <h3>1.2.1</h3>
+        <h3>1.2.2</h3>
         <ul>
-          <li>Enhance the existing "accelerate bits/stdc++.h" option for GCC toolchains.</li>
-          <li>Use GCC 16+ standard-library GCM cache to accelerate <code>#include &lt;bits/stdc++.h&gt;</code>, while still allowing code to use <code>import std</code>.</li>
-          <li>Keep GCC 15 and below on the existing PCH acceleration path.</li>
-          <li>Add route diagnostics for std-module/PCH hits and reduce GCC 16+ hot-path preparation overhead with cached probes.</li>
+          <li>Remove internal IntelliJ Platform API usage from plugin version reporting.</li>
+          <li>Keep theme compatibility checks and error reports on the Gradle-resolved plugin version.</li>
         </ul>
     ]]></change-notes>
 

@@ -84,18 +84,21 @@ val generateCphBuildFeatures by tasks.registering {
     dependsOn(validateReleaseVersions)
     inputs.property("cphVariant", cphVariant)
     inputs.property("cphLocalDiagnostics", cphLocalDiagnostics)
+    inputs.property("resolvedPluginVersion", resolvedPluginVersion)
     val outputDir = layout.buildDirectory.dir("generated/cphBuildFeatures/kotlin/org/kkkzbh/cph")
     outputs.dir(outputDir)
     doLast {
         val variant = cphVariant.get()
         val eap = variant == "eap"
         val localDiagnostics = cphLocalDiagnostics.get()
+        val pluginVersion = resolvedPluginVersion.get().trim()
         outputDir.get().file("CphBuildFeatures.kt").asFile.writeText(
             """
             package org.kkkzbh.cph
 
             internal object CphBuildFeatures {
                 const val releaseChannel: String = "$variant"
+                const val pluginVersion: String = "$pluginVersion"
                 const val isEap: Boolean = $eap
                 const val localDiagnosticsEnabled: Boolean = $localDiagnostics
                 const val utilitySettingsEnabled: Boolean = $eap
