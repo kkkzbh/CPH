@@ -8,7 +8,9 @@
     <change-notes><![CDATA[
         <h3>1.2.4</h3>
         <ul>
-          <li>Do not intercept configured CPH shortcuts before CPH is enabled for the project.</li>
+          <li>新增 Competitive Companion 导入题目的 C++ 模板配置，支持变量替换与外部模板文件。</li>
+          <li>支持从“设置”页面直接预览并管理模板内容，导入时自动写入新文件。</li>
+          <li>完善导入题目与快捷提交相关设置，优化样例导入和运行体验。</li>
         </ul>
     ]]></change-notes>
 
