@@ -144,27 +144,7 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = resolvedPluginVersion
         description = """
-            <h2>CPH Target Runner：面向 CLion 的竞赛样例管理工具</h2>
-            <p>
-              CPH Target Runner 是一个面向 CLion 的竞赛样例管理插件。它把样例输入、期望输出、运行结果、差异对比、编译选项和快捷键集中到右侧 CPH 工具窗口，让你在 CLion 里完成接近 VS Code CPH 的刷题调试流程。
-            </p>
-            <p>主要功能：</p>
-            <ul>
-              <li>按当前 CMake Target 或单个 cpp 文件保存独立样例。</li>
-              <li>支持添加多个 Case、临时禁用 Case、运行单个样例或一键运行全部样例。</li>
-              <li>自动对比标准输出和期望输出，高亮定位 WA 差异。</li>
-              <li>支持纯单文件模式，适合日常竞赛刷题，不需要手动维护多个 CMake Target。</li>
-              <li>支持配置工作目录、时间限制、C++ 标准、编译选项和 GCC bits 预编译头加速。</li>
-              <li>支持自定义全局快捷键，用键盘快速运行、调试和提交。</li>
-              <li>内置 Competitive Companion 接收服务，可从 Codeforces、AtCoder、洛谷、Kattis 等平台导入题目和样例。</li>
-              <li>可配合浏览器扩展将当前 cpp 文件提交到浏览器活动 Tab 对应的 Codeforces 题目。</li>
-            </ul>
-            <p>
-              适合希望在 CLion 中完成竞赛题目本地调试、样例管理和快速运行的 C++ 用户。
-            </p>
-            <p>
-              安全说明：Codeforces 提交依赖浏览器当前登录态，CLion 插件不保存账号、密码或会话 Cookie。
-            </p>
+            A CLion competitive-programming tool that manages sample cases for each target or single file, lets you run and compare outputs quickly, configure compiler options and shortcuts, and submit solutions to Codeforces from the active editor file.
         """.trimIndent()
 
         ideaVersion {
