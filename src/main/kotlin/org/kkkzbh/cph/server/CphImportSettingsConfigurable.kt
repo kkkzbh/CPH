@@ -1,7 +1,9 @@
 package org.kkkzbh.cph.server
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
@@ -33,11 +35,15 @@ internal class CphImportSettingsConfigurable : Configurable {
     )
     private val sourceRootField = JBTextField()
     private val pathTemplateField = JBTextField()
+    private val templatePathField = TextFieldWithBrowseButton()
     private val templateArea = JBTextArea(8, 60)
     private val overwriteCheckBox = JBCheckBox()
     private val statusLabel = JBLabel()
-    private val variablesButton = JButton(AllIcons.General.ContextHelp)
-    private var variablesButtonConfigured = false
+    private val pathVariablesButton = JButton(AllIcons.General.ContextHelp)
+    private val cppVariablesButton = JButton(AllIcons.General.ContextHelp)
+    private var pathVariablesButtonConfigured = false
+    private var cppVariablesButtonConfigured = false
+    private var templatePathFieldConfigured = false
 
     override fun getDisplayName(): String = "CPH Target Runner"
 
@@ -45,7 +51,9 @@ internal class CphImportSettingsConfigurable : Configurable {
         val text = CphText.current().importSettings()
         enabledCheckBox.text = text.enableServer
         overwriteCheckBox.text = text.overwriteExisting
-        configureVariablesButton()
+        configurePathVariablesButton()
+        configureCppVariablesButton()
+        configureTemplatePathField()
 
         return panel {
             group(text.importReceiver) {
@@ -68,13 +76,17 @@ internal class CphImportSettingsConfigurable : Configurable {
                 }
                 row(text.pathTemplate) {
                     cell(pathTemplateField).align(AlignX.FILL)
-                    cell(variablesButton)
+                    cell(pathVariablesButton)
                 }
                 row {
                     cell(overwriteCheckBox)
                 }
             }
             group(text.cppTemplateGroup) {
+                row(text.cppTemplatePath) {
+                    cell(templatePathField).align(AlignX.FILL)
+                    cell(cppVariablesButton)
+                }
                 row {
                     cell(JScrollPane(templateArea)).align(AlignX.FILL)
                 }
@@ -82,31 +94,64 @@ internal class CphImportSettingsConfigurable : Configurable {
         }
     }
 
-    private fun configureVariablesButton() {
-        if (variablesButtonConfigured) return
-        variablesButtonConfigured = true
-        variablesButton.isFocusable = false
-        variablesButton.isBorderPainted = false
-        variablesButton.isContentAreaFilled = false
-        variablesButton.isOpaque = false
-        variablesButton.toolTipText = CphText.current().importSettings().variables
-        variablesButton.border = JBUI.Borders.empty(2)
-        variablesButton.addActionListener {
+    private fun configurePathVariablesButton() {
+        if (pathVariablesButtonConfigured) return
+        pathVariablesButtonConfigured = true
+        configureVariablesButton(
+            button = pathVariablesButton,
+            toolTip = CphText.current().importSettings().variables,
+        ) { CphText.current().importSettings().pathVariableDescriptions() }
+    }
+
+    private fun configureCppVariablesButton() {
+        if (cppVariablesButtonConfigured) return
+        cppVariablesButtonConfigured = true
+        configureVariablesButton(
+            button = cppVariablesButton,
+            toolTip = CphText.current().importSettings().cppTemplateVariables,
+        ) { CphText.current().importSettings().cppTemplateVariableDescriptions() }
+    }
+
+    private fun configureVariablesButton(
+        button: JButton,
+        toolTip: String,
+        variables: () -> List<Pair<String, String>>,
+    ) {
+        button.isFocusable = false
+        button.isBorderPainted = false
+        button.isContentAreaFilled = false
+        button.isOpaque = false
+        button.toolTipText = toolTip
+        button.border = JBUI.Borders.empty(2)
+        button.addActionListener {
             JBPopupFactory.getInstance()
-                .createComponentPopupBuilder(variablesPanel(), variablesButton)
+                .createComponentPopupBuilder(variablesPanel(variables()), button)
                 .setRequestFocus(false)
                 .setCancelOnClickOutside(true)
                 .setCancelOnWindowDeactivation(true)
                 .createPopup()
-                .showUnderneathOf(variablesButton)
+                .showUnderneathOf(button)
         }
     }
 
-    private fun variablesPanel(): JComponent {
-        val strings = CphText.current().importSettings()
+    private fun configureTemplatePathField() {
+        if (templatePathFieldConfigured) return
+        templatePathFieldConfigured = true
+        val text = CphText.current().importSettings()
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle(text.chooseCppTemplate)
+        templatePathField.addBrowseFolderListener(
+            text.chooseCppTemplate,
+            text.chooseCppTemplateDescription,
+            null,
+            descriptor,
+        )
+    }
+
+    private fun variablesPanel(variables: List<Pair<String, String>>): JComponent {
         val rows = JPanel(GridLayout(0, 1, 0, JBUI.scale(6))).apply {
             isOpaque = false
-            strings.variableDescriptions().forEach { (variable, description) ->
+            variables.forEach { (variable, description) ->
                 add(JBLabel("<html><b>$variable</b>&nbsp;&nbsp;$description</html>"))
             }
         }
@@ -138,6 +183,7 @@ internal class CphImportSettingsConfigurable : Configurable {
         val state = CphImportSettings.getInstance().state
         return sourceRootField.text != state.sourceRoot ||
             pathTemplateField.text != state.pathTemplate ||
+            templatePathField.text != state.cppTemplatePath ||
             (portSpinner.value as Int) != state.port ||
             templateArea.text != state.cppTemplate ||
             overwriteCheckBox.isSelected != state.overwriteExisting ||
@@ -150,6 +196,7 @@ internal class CphImportSettingsConfigurable : Configurable {
         val current = CphImportSettings.getInstance().state
         current.sourceRoot = sourceRootField.text.ifBlank { CPH_DEFAULT_SOURCE_ROOT }
         current.pathTemplate = pathTemplateField.text.ifBlank { CPH_DEFAULT_PATH_TEMPLATE }
+        current.cppTemplatePath = templatePathField.text.trim()
         current.port = CphImportSettings.clampPort(portSpinner.value as Int)
         current.cppTemplate = templateArea.text.ifEmpty { CPH_DEFAULT_CPP_TEMPLATE }
         current.overwriteExisting = overwriteCheckBox.isSelected
@@ -164,6 +211,7 @@ internal class CphImportSettingsConfigurable : Configurable {
         val state = CphImportSettings.getInstance().state
         sourceRootField.text = state.sourceRoot
         pathTemplateField.text = state.pathTemplate
+        templatePathField.text = state.cppTemplatePath
         portSpinner.value = state.port
         templateArea.text = state.cppTemplate
         overwriteCheckBox.isSelected = state.overwriteExisting

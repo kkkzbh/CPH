@@ -8,6 +8,7 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
@@ -30,6 +31,11 @@ internal data class CphImportOutcome(
     val sourcePath: String? = null,
     val targetName: String? = null,
     val caseCount: Int = 0,
+)
+
+private data class CphPreparedSourceFile(
+    val file: VirtualFile,
+    val cursorOffset: Int?,
 )
 
 @Service(Service.Level.PROJECT)
@@ -60,13 +66,16 @@ internal class CphProblemImporter(private val project: Project) {
         val baseDir = project.basePath
             ?: return CphImportOutcome(success = false, message = "Project has no base directory.")
 
-        val sourceFile = ensureSourceFile(
+        val preparedSource = prepareSourceFile(
             baseDir = baseDir,
             sourceRoot = settings.sourceRoot,
             relativePath = relativePath,
-            template = settings.cppTemplate,
+            settings = settings,
+            payload = payload,
+            coords = coords,
             overwrite = settings.overwriteExisting,
         )
+        val sourceFile = preparedSource.file
 
         val creation = computeOnEdt {
             val result = CphCppFileRunConfigurationFactory.findOrCreate(
@@ -89,7 +98,7 @@ internal class CphProblemImporter(private val project: Project) {
             logger.warn("CPH refresh failed: ${refresh.error}")
         }
 
-        openInEditor(sourceFile)
+        openInEditor(sourceFile, preparedSource.cursorOffset)
 
         notify(
             "Imported ${payload.name} (${payload.tests.size} tests)",
@@ -105,17 +114,47 @@ internal class CphProblemImporter(private val project: Project) {
         )
     }
 
-    private fun ensureSourceFile(
+    private fun prepareSourceFile(
         baseDir: String,
         sourceRoot: String,
         relativePath: String,
-        template: String,
+        settings: CphImportSettingsState,
+        payload: CompetitiveCompanionPayload,
+        coords: CphProblemCoordinates,
         overwrite: Boolean,
-    ): VirtualFile {
+    ): CphPreparedSourceFile {
         val combined = listOf(sourceRoot.trim('/'), relativePath.trim('/'))
             .filter { it.isNotEmpty() }
             .joinToString("/")
         val targetFile = File(baseDir, combined).normalize()
+        if (targetFile.isFile && !overwrite) {
+            val existing = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(targetFile)
+                ?: error("Cannot locate existing source file ${targetFile.path}")
+            return CphPreparedSourceFile(file = existing, cursorOffset = null)
+        }
+
+        val template = CphCppTemplateLoader.load(settings, baseDir)
+        val rendered = CphCppTemplateRenderer.render(
+            template = template,
+            payload = payload,
+            coords = coords,
+            fileName = targetFile.name,
+        )
+        val sourceFile = writeSourceFile(
+            baseDir = baseDir,
+            targetFile = targetFile,
+            template = rendered.text,
+            overwrite = overwrite,
+        )
+        return CphPreparedSourceFile(file = sourceFile, cursorOffset = rendered.cursorOffset)
+    }
+
+    private fun writeSourceFile(
+        baseDir: String,
+        targetFile: File,
+        template: String,
+        overwrite: Boolean,
+    ): VirtualFile {
         val parentFile = targetFile.parentFile
             ?: error("Cannot determine parent directory for ${targetFile.path}")
 
@@ -162,10 +201,17 @@ internal class CphProblemImporter(private val project: Project) {
         }
     }
 
-    private fun openInEditor(file: VirtualFile) {
+    private fun openInEditor(file: VirtualFile, cursorOffset: Int?) {
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed) return@invokeLater
-            FileEditorManager.getInstance(project).openFile(file, true)
+            if (cursorOffset != null) {
+                FileEditorManager.getInstance(project).openTextEditor(
+                    OpenFileDescriptor(project, file, cursorOffset),
+                    true,
+                ) ?: FileEditorManager.getInstance(project).openFile(file, true)
+            } else {
+                FileEditorManager.getInstance(project).openFile(file, true)
+            }
         }
     }
 

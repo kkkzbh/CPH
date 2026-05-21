@@ -8,10 +8,10 @@ import java.awt.Color
 
 class CphPluginSettingsTest {
     @Test
-    fun codeforcesRemoteSubmitPluginDefaultsDisabled() {
+    fun codeforcesRemoteSubmitPluginDefaultsEnabled() {
         val service = CphPluginSettings()
 
-        assertFalse(service.state.codeforcesRemoteSubmitEnabled)
+        assertTrue(service.state.codeforcesRemoteSubmitEnabled)
         assertEquals(CphThemeId.CLASSIC, service.state.selectedThemeId)
         assertEquals(CphUiLanguage.ZH_CN.id, service.state.uiLanguage)
         assertTrue(service.state.installedThemeVersions.isEmpty())
@@ -101,7 +101,7 @@ class CphPluginSettingsTest {
         assertEquals(experimentalEnabled, CphBuildFeatures.isEap)
         assertEquals(experimentalEnabled, CphBuildFeatures.utilitySettingsEnabled)
         assertEquals(experimentalEnabled, CphBuildFeatures.themeSettingsEnabled)
-        assertEquals(experimentalEnabled, CphBuildFeatures.codeforcesSubmitEnabled)
+        assertTrue(CphBuildFeatures.codeforcesSubmitEnabled)
         assertEquals(experimentalEnabled, CphBuildFeatures.aveMujicaThemeEnabled)
         assertEquals(false, CphBuildFeatures.localDiagnosticsEnabled)
     }
@@ -187,8 +187,7 @@ class CphPluginSettingsTest {
                 singleFileModeEnabled = false,
             ),
         )
-        assertEquals(
-            CphBuildFeatures.codeforcesSubmitEnabled,
+        assertTrue(
             CphCodeforcesSubmitFeature.actionEnabled(
                 pluginEnabled = true,
                 singleFileModeEnabled = true,

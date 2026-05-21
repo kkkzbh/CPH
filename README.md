@@ -1,18 +1,35 @@
 # CPH Target Runner
 
-CPH Target Runner 是一个面向 CLion 的竞赛样例管理插件。它把样例输入、期望输出、运行结果、差异查看和题目导入集中到右侧 `CPH` 工具窗口，适合 Codeforces、AtCoder、洛谷等题目的本地调试。
+CPH Target Runner 是一个面向 CLion 的竞赛样例管理插件。它把样例输入、期望输出、运行结果、差异对比、编译选项和快捷键集中到右侧 `CPH` 工具窗口，让你在 CLion 里完成接近 VS Code CPH 的刷题调试流程。
+
+主要功能：
+
+- 按当前 CMake Target 或单个 cpp 文件保存独立样例。
+- 支持添加多个 Case、临时禁用 Case、运行单个样例或一键运行全部样例。
+- 自动对比标准输出和期望输出，高亮定位 WA 差异。
+- 支持纯单文件模式，适合日常竞赛刷题，不需要手动维护多个 CMake Target。
+- 支持配置工作目录、时间限制、C++ 标准、编译选项和 GCC bits 预编译头加速。
+- 支持自定义全局快捷键，用键盘快速运行、调试和提交。
+- 内置 Competitive Companion 接收服务，可从 Codeforces、AtCoder、洛谷、Kattis 等平台导入题目和样例。
+- 可配合浏览器扩展将当前 cpp 文件提交到浏览器活动 Tab 对应的 Codeforces 题目。
+
+适合希望在 CLion 中完成竞赛题目本地调试、样例管理和快速运行的 C++ 用户。
 
 在线使用文档：<https://cph.kkkzbh.cn/>
 
 ## 插件界面
 
-![CPH Target Runner plugin demo](docs/assets/plugin-demo.png)
+![CPH 主界面：样例运行和输出差异定位](docs/assets/marketplace-main.png)
+
+![CPH 设置界面：单文件模式、编译选项和快捷键](docs/assets/marketplace-settings.png)
 
 ## 快速开始
 
-打开右侧 `CPH` 工具窗口后，可以直接编辑当前样例的 `Input` 和 `Expected output`，然后点击 `Run` 运行当前样例，或点击顶部运行按钮执行全部启用样例。
+打开右侧 `CPH` 工具窗口后，点击 `启动 CPH` 启用当前项目。随后可以直接编辑当前样例的输入和期望输出，点击 `运行` 运行当前样例，或点击顶部运行按钮执行全部启用样例。
 
-点击设置按钮进入运行设置，再次点击可关闭设置面板。
+运行后插件会展示标准输出、期望输出和最近一次结果；当结果不一致时，会高亮差异行，方便快速定位 WA。
+
+点击设置按钮进入运行设置，可以配置界面语言、工作模式、工作目录、时间限制、C++ 标准、编译选项、输出显示方式和全局快捷键。
 
 对 CMake 不熟悉时，推荐启用纯单文件模式，行为更接近 VS Code CPH：
 
@@ -82,6 +99,43 @@ problems/atcoder/abc300/D.cpp
 problems/luogu/problems/P1000.cpp
 problems/kattis/problems/hello.cpp
 ```
+
+### C++ 代码模板
+
+`Settings / Tools / CPH Target Runner` 中的 **C++ 代码模板** 会用于导入题目时创建新的 `.cpp` 文件。可以直接在设置页编辑模板，也可以填写一个外部模板文件路径；填写后插件会优先读取该文件，相对路径按项目根目录解析。
+
+模板支持在创建文件时替换题目信息：
+
+```cpp
+// Problem: ${name}
+// URL: ${url}
+// Source: ${source}
+// Contest: ${contest}
+// Index: ${index}
+// Time Limit: ${timeLimit} ms
+// Memory Limit: ${memoryLimit}
+
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    ${cursor}
+    return 0;
+}
+```
+
+常用变量包括：
+
+```text
+${name} ${url} ${group} ${source} ${contest} ${index} ${slug}
+${timeLimit} ${memoryLimit} ${interactive}
+${date} ${datetime} ${fileName} ${cursor}
+```
+
+`${cursor}` 会在生成文件后被删除，并把编辑器光标移动到该位置。未知变量会原样保留。
 
 ## 一键提交到 Codeforces
 

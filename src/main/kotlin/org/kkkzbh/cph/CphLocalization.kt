@@ -55,6 +55,7 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     val outputSplit = if (zh) "双栏显示标准输出 / 期望输出" else "Show Standard / Expected side by side"
     val noExpectedMode = if (zh) "无期望输出模式" else "No expected output mode"
     val showStderr = if (zh) "显示标准错误" else "Show standard error"
+    val compactCaseTabs = if (zh) "紧凑样例栏" else "Compact case bar"
     val confidentSubmit = if (zh) "自信模式：本地全 AC 后自动提交 CF" else "Confident mode: auto-submit to CF after local AC"
     val parallelCaseRun = if (zh) "并行运行样例" else "Run cases in parallel"
     val parallelCaseRunTooltip = if (zh) {
@@ -344,7 +345,12 @@ internal class CphImportSettingsTexts(private val language: CphUiLanguage) {
     val pathTemplate = if (zh) "路径模板：" else "Path template:"
     val variables = if (zh) "路径模板变量" else "Path template variables"
     val cppTemplate = if (zh) "C++ 代码模板：" else "C++ code template:"
+    val cppTemplatePath = if (zh) "模板文件路径（可选）：" else "Template file path (optional):"
     val cppTemplateGroup = if (zh) "C++ 代码模板" else "C++ Template"
+    val cppTemplateVariables = if (zh) "C++ 模板变量" else "C++ template variables"
+    val chooseCppTemplate = if (zh) "选择 C++ 模板文件" else "Choose C++ template file"
+    val chooseCppTemplateDescription =
+        if (zh) "选择导入题目时用于生成 cpp 文件的模板文件" else "Choose the template file used to create cpp files when importing problems"
 
     fun statusRunning(port: Int): String =
         if (zh) "运行中：127.0.0.1:$port" else "Running: 127.0.0.1:$port"
@@ -358,7 +364,7 @@ internal class CphImportSettingsTexts(private val language: CphUiLanguage) {
     fun statusError(port: Int, message: String): String =
         if (zh) "错误（端口 $port）：$message" else "Error (port $port): $message"
 
-    fun variableDescriptions(): List<Pair<String, String>> =
+    fun pathVariableDescriptions(): List<Pair<String, String>> =
         if (zh) {
             listOf(
                 "\${contest}" to "比赛 ID 或题单来源标识",
@@ -374,6 +380,43 @@ internal class CphImportSettingsTexts(private val language: CphUiLanguage) {
                 "\${name}" to "Original problem title",
                 "\${slug}" to "Problem title normalized for file names",
                 "\${source}" to "Lowercase source platform: codeforces, atcoder, luogu, kattis, or generic",
+            )
+        }
+
+    fun cppTemplateVariableDescriptions(): List<Pair<String, String>> =
+        if (zh) {
+            listOf(
+                "\${name}" to "原始题目标题",
+                "\${url}" to "题目页面 URL",
+                "\${group}" to "Competitive Companion 提供的分组或比赛名",
+                "\${source}" to "小写题目来源平台",
+                "\${contest}" to "比赛 ID 或题单来源标识",
+                "\${index}" to "题目编号，如 A、B1",
+                "\${slug}" to "适合作为文件名的题目标题",
+                "\${timeLimit}" to "时间限制，单位 ms；缺失时为空",
+                "\${memoryLimit}" to "内存限制；缺失时为空",
+                "\${interactive}" to "是否为交互题：true 或 false",
+                "\${date}" to "当前日期：yyyy-MM-dd",
+                "\${datetime}" to "当前时间：yyyy-MM-dd HH:mm:ss",
+                "\${fileName}" to "最终生成的 cpp 文件名",
+                "\${cursor}" to "生成后光标位置，不会保留到文件中",
+            )
+        } else {
+            listOf(
+                "\${name}" to "Original problem title",
+                "\${url}" to "Problem page URL",
+                "\${group}" to "Group or contest name from Competitive Companion",
+                "\${source}" to "Lowercase source platform",
+                "\${contest}" to "Contest ID or problem-set source identifier",
+                "\${index}" to "Problem index, such as A or B1",
+                "\${slug}" to "Problem title normalized for file names",
+                "\${timeLimit}" to "Time limit in ms; empty when unavailable",
+                "\${memoryLimit}" to "Memory limit; empty when unavailable",
+                "\${interactive}" to "Whether the problem is interactive: true or false",
+                "\${date}" to "Current date: yyyy-MM-dd",
+                "\${datetime}" to "Current time: yyyy-MM-dd HH:mm:ss",
+                "\${fileName}" to "Final generated cpp file name",
+                "\${cursor}" to "Caret position after creation; removed from the file",
             )
         }
 }

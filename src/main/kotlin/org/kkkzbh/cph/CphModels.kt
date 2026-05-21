@@ -80,6 +80,7 @@ data class CphUiState(
     var editorFontSize: Int = CPH_DEFAULT_EDITOR_FONT_SIZE,
     var noExpectedModeEnabled: Boolean = false,
     var showStderrEnabled: Boolean = false,
+    var compactCaseTabsEnabled: Boolean = false,
     var confidentSubmitEnabled: Boolean = false,
     var parallelCaseRunEnabled: Boolean = false,
     var settingsReturnHintShown: Boolean = false,

@@ -36,6 +36,7 @@ import org.kkkzbh.cph.submit.CphSubmissionStatusListener
 import org.kkkzbh.cph.submit.CphSubmitContextResolver
 import org.kkkzbh.cph.submit.CphSubmitOrchestrator
 import java.awt.AlphaComposite
+import java.awt.BasicStroke
 import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
@@ -299,6 +300,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private val outputSplitEnabled = JCheckBox()
     private val noExpectedModeEnabled = JCheckBox()
     private val showStderrEnabled = JCheckBox()
+    private val compactCaseTabsEnabled = JCheckBox()
     private val confidentSubmitEnabled = JCheckBox()
     private val parallelCaseRunEnabled = JCheckBox()
     private val parallelCaseRunHelp = JBLabel("?")
@@ -442,6 +444,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             if (!applyingTargetSettings) {
                 stateService.getState().ui.showStderrEnabled = showStderrEnabled.isSelected
                 rebuildOutputLayout()
+            }
+        }
+        compactCaseTabsEnabled.addActionListener {
+            if (!applyingTargetSettings) {
+                stateService.getState().ui.compactCaseTabsEnabled = compactCaseTabsEnabled.isSelected
+                refreshTabs {
+                    revealCaseTab(selectedCase?.id)
+                }
             }
         }
         confidentSubmitEnabled.addActionListener {
@@ -620,6 +630,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         outputSplitEnabled.text = text.outputSplit
         noExpectedModeEnabled.text = text.noExpectedMode
         showStderrEnabled.text = text.showStderr
+        compactCaseTabsEnabled.text = text.compactCaseTabs
         confidentSubmitEnabled.text = text.confidentSubmit
         parallelCaseRunEnabled.text = text.parallelCaseRun
         parallelCaseRunEnabled.toolTipText = text.parallelCaseRunTooltip
@@ -1559,8 +1570,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun tabStripBaseHeight(): Int {
+        if (compactCaseTabsEnabled()) return COMPACT_TAB_STRIP_BASE_HEIGHT
         return if (theme.id == CphThemeId.AVE_MUJICA) AVE_MUJICA_TAB_STRIP_BASE_HEIGHT else TAB_STRIP_BASE_HEIGHT
     }
+
+    private fun compactCaseTabsEnabled(): Boolean = stateService.getState().ui.compactCaseTabsEnabled
 
     private fun rebuildSettingsView() {
         activeSettingsTab = normalizeSettingsTab(activeSettingsTab)
@@ -1591,6 +1605,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         outputSplitEnabled.isOpaque = false
         noExpectedModeEnabled.isOpaque = false
         showStderrEnabled.isOpaque = false
+        compactCaseTabsEnabled.isOpaque = false
         confidentSubmitEnabled.isOpaque = false
         parallelCaseRunEnabled.isOpaque = false
         gccBitsPchEnabled.isOpaque = false
@@ -1648,8 +1663,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         })
         settingsGrid.add(Box.createVerticalStrut(14))
         settingsGrid.add(settingsSection(text.outputAndDisplay) {
-            settingCheckBoxGroupRow(text.outputComparison, ignoreTrailingWhitespace)
-            settingCheckBoxGroupRow(text.displayMode, noExpectedModeEnabled, outputSplitEnabled, showStderrEnabled)
+            settingSubheading(text.outputComparison)
+            settingCheckBoxRow(ignoreTrailingWhitespace)
+            settingCheckBoxRow(noExpectedModeEnabled)
+            settingSubheading(text.displayMode)
+            settingCheckBoxRow(outputSplitEnabled)
+            settingCheckBoxRow(showStderrEnabled)
+            settingCheckBoxRow(compactCaseTabsEnabled)
             settingRow(text.displayFontSize, shortSpinnerControl(editorFontSizeSpinner))
         })
         if (isCodeforcesSubmitPluginEnabled()) {
@@ -2516,6 +2536,15 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         add(group, settingConstraints(row, 1, weightx = 1.0))
     }
 
+    private fun JPanel.settingSubheading(text: String) {
+        val row = nextSettingRow()
+        add(JBLabel(text.trimEnd(':', '：')).also {
+            it.foreground = theme.muted
+            it.font = it.font.deriveFont(Font.BOLD, it.font.size2D - 1.0f)
+            it.border = EmptyBorder(8, 0, 2, 0)
+        }, settingConstraints(row, 0, gridwidth = 2, weightx = 1.0))
+    }
+
     private fun settingLabel(text: String): JBLabel {
         return JBLabel(text).also {
             it.foreground = theme.text
@@ -2622,6 +2651,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         outputSplitEnabled.isSelected = uiState.outputSplitEnabled
         noExpectedModeEnabled.isSelected = uiState.noExpectedModeEnabled
         showStderrEnabled.isSelected = uiState.showStderrEnabled
+        compactCaseTabsEnabled.isSelected = uiState.compactCaseTabsEnabled
         confidentSubmitEnabled.isSelected = uiState.confidentSubmitEnabled
         parallelCaseRunEnabled.isSelected = uiState.parallelCaseRunEnabled
         outputSplitEnabled.isEnabled = !running && !uiState.noExpectedModeEnabled
@@ -3098,6 +3128,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             editorFontSizeSpinner.value = stateService.getState().ui.editorFontSize
             noExpectedModeEnabled.isSelected = stateService.getState().ui.noExpectedModeEnabled
             showStderrEnabled.isSelected = stateService.getState().ui.showStderrEnabled
+            compactCaseTabsEnabled.isSelected = stateService.getState().ui.compactCaseTabsEnabled
             confidentSubmitEnabled.isSelected = stateService.getState().ui.confidentSubmitEnabled
             parallelCaseRunEnabled.isSelected = stateService.getState().ui.parallelCaseRunEnabled
             ignoreTrailingWhitespace.isSelected = currentTargetCases.ignoreTrailingWhitespace
@@ -3801,14 +3832,17 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun caseTabPreferredSize(): Dimension {
+        if (compactCaseTabsEnabled()) return Dimension(86, 32)
         return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(128, 64) else Dimension(123, 60)
     }
 
     private fun caseTabMinimumSize(): Dimension {
+        if (compactCaseTabsEnabled()) return Dimension(58, 32)
         return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(108, 64) else Dimension(102, 60)
     }
 
     private fun caseTabMaximumSize(): Dimension {
+        if (compactCaseTabsEnabled()) return Dimension(108, 32)
         return if (theme.id == CphThemeId.AVE_MUJICA) Dimension(161, 64) else Dimension(161, 60)
     }
 
@@ -3923,6 +3957,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         languageCombo.isEnabled = !running
         noExpectedModeEnabled.isEnabled = !running
         showStderrEnabled.isEnabled = !running
+        compactCaseTabsEnabled.isEnabled = !running
         confidentSubmitEnabled.isEnabled = codeforcesSubmitEnabled && !running && stateService.getState().singleFileModeEnabled
         parallelCaseRunEnabled.isEnabled = !running
         gccBitsPchEnabled.isEnabled = !running
@@ -3970,111 +4005,265 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 else -> theme.border
             }
 
+            if (compactCaseTabsEnabled()) {
+                configureCompactCaseTab(index, testCase, status, style, isSelected, tabBackground, tabBorder)
+            } else {
+                background = tabBackground
+                border = CompoundBorder(
+                    MatteBorder(1, 1, 2, 1, tabBorder),
+                    EmptyBorder(3, 10, 3, 8),
+                )
+                preferredSize = caseTabPreferredSize()
+                minimumSize = caseTabMinimumSize()
+                maximumSize = caseTabMaximumSize()
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+
+                deleteCaseButton.isEnabled = !running
+                deleteCaseButton.toolTipText = CphText.current().deleteCase
+                deleteCaseButton.foreground = if (deleteCaseButton.isEnabled) Color.WHITE else theme.muted
+                deleteCaseButton.background = tabBackground
+                deleteCaseButton.isOpaque = false
+                deleteCaseButton.isContentAreaFilled = false
+                deleteCaseButton.isBorderPainted = false
+                deleteCaseButton.isFocusPainted = false
+                deleteCaseButton.horizontalAlignment = SwingConstants.CENTER
+                deleteCaseButton.border = EmptyBorder(0, 0, 0, 0)
+                deleteCaseButton.preferredSize = caseDeleteButtonSize()
+                deleteCaseButton.maximumSize = deleteCaseButton.preferredSize
+                deleteCaseButton.font = deleteCaseButton.font.deriveFont(Font.BOLD, deleteCaseButton.font.size2D + 1.0f)
+                if (theme.id == CphThemeId.AVE_MUJICA) {
+                    setThemeButtonFace(deleteCaseButton, "delete_case", false, "×", null, caseDeleteIconSize())
+                    deleteCaseButton.model.addChangeListener(ChangeListener { refreshGeneratedIconOnly(deleteCaseButton) })
+                    installThemedIconAnimation(deleteCaseButton)
+                }
+                deleteCaseButton.addActionListener { deleteCase(testCase) }
+
+                title.text = if (statusGlyph != null) {
+                    index.toString()
+                } else {
+                    tabTitle(index, status)
+                }
+                title.foreground = foreground
+                title.font = title.font.deriveFont(Font.BOLD, title.font.size2D + caseTabTitleFontDelta())
+                title.alignmentX = Component.LEFT_ALIGNMENT
+
+                detail.text = tabDetail(testCase, status)
+                detail.foreground = theme.muted
+                detail.font = detail.font.deriveFont(Font.PLAIN, detail.font.size2D - 1.0f)
+                detail.alignmentX = Component.LEFT_ALIGNMENT
+                toolTipText = tabTooltip(testCase, status)
+
+                val content = JPanel(BorderLayout(if (theme.id == CphThemeId.AVE_MUJICA) 4 else 8, 0))
+                content.background = background
+                val textPanel = JPanel()
+                textPanel.layout = BoxLayout(textPanel, BoxLayout.Y_AXIS)
+                textPanel.background = background
+                val titleRow = if (statusGlyph != null) {
+                    JPanel().apply {
+                        layout = BoxLayout(this, BoxLayout.X_AXIS)
+                        background = tabBackground
+                        alignmentX = Component.LEFT_ALIGNMENT
+                        add(title)
+                        add(Box.createRigidArea(Dimension(2, 0)))
+                        add(statusGlyph)
+                    }
+                } else {
+                    null
+                }
+                textPanel.add(titleRow ?: title)
+                textPanel.add(detail)
+                if (theme.id == CphThemeId.AVE_MUJICA) {
+                    val textWidth = aveMujicaCaseTextWidth(title, statusGlyph != null)
+                    val textHeight = textPanel.preferredSize.height
+                    textPanel.minimumSize = Dimension(textWidth, textHeight)
+                    textPanel.preferredSize = Dimension(textWidth, textHeight)
+                }
+                val actionPanel = JPanel(GridBagLayout())
+                actionPanel.background = background
+                actionPanel.preferredSize = Dimension(caseDeleteActionWidth(), 1)
+                val deleteConstraints = GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    weightx = 1.0
+                    weighty = 1.0
+                    anchor = GridBagConstraints.NORTHEAST
+                }
+                actionPanel.add(deleteCaseButton, deleteConstraints)
+                content.add(textPanel, BorderLayout.CENTER)
+                content.add(actionPanel, BorderLayout.EAST)
+                content.toolTipText = toolTipText
+                title.toolTipText = toolTipText
+                detail.toolTipText = toolTipText
+                textPanel.toolTipText = toolTipText
+                actionPanel.toolTipText = toolTipText
+                titleRow?.toolTipText = toolTipText
+                statusGlyph?.toolTipText = toolTipText
+
+                val selectListener = object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                        selectCase(testCase)
+                    }
+                }
+                addMouseListener(selectListener)
+                content.addMouseListener(selectListener)
+                title.addMouseListener(selectListener)
+                detail.addMouseListener(selectListener)
+                textPanel.addMouseListener(selectListener)
+                titleRow?.addMouseListener(selectListener)
+                statusGlyph?.addMouseListener(selectListener)
+
+                add(content, BorderLayout.CENTER)
+            }
+        }
+
+        private fun configureCompactCaseTab(
+            index: Int,
+            testCase: CphTestCase,
+            status: TabStatus,
+            style: TabStyle,
+            selected: Boolean,
+            tabBackground: Color,
+            tabBorder: Color,
+        ) {
             background = tabBackground
             border = CompoundBorder(
                 MatteBorder(1, 1, 2, 1, tabBorder),
-                EmptyBorder(3, 10, 3, 8),
+                EmptyBorder(2, 6, 2, 4),
             )
-            preferredSize = caseTabPreferredSize()
-            minimumSize = caseTabMinimumSize()
-            maximumSize = caseTabMaximumSize()
-            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-
-            deleteCaseButton.isEnabled = !running
-            deleteCaseButton.toolTipText = CphText.current().deleteCase
-            deleteCaseButton.foreground = if (deleteCaseButton.isEnabled) Color.WHITE else theme.muted
-            deleteCaseButton.background = tabBackground
-            deleteCaseButton.isOpaque = false
-            deleteCaseButton.isContentAreaFilled = false
-            deleteCaseButton.isBorderPainted = false
-            deleteCaseButton.isFocusPainted = false
-            deleteCaseButton.horizontalAlignment = SwingConstants.CENTER
-            deleteCaseButton.border = EmptyBorder(0, 0, 0, 0)
-            deleteCaseButton.preferredSize = caseDeleteButtonSize()
-            deleteCaseButton.maximumSize = deleteCaseButton.preferredSize
-            deleteCaseButton.font = deleteCaseButton.font.deriveFont(Font.BOLD, deleteCaseButton.font.size2D + 1.0f)
-            if (theme.id == CphThemeId.AVE_MUJICA) {
-                setThemeButtonFace(deleteCaseButton, "delete_case", false, "×", null, caseDeleteIconSize())
-                deleteCaseButton.model.addChangeListener(ChangeListener { refreshGeneratedIconOnly(deleteCaseButton) })
-                installThemedIconAnimation(deleteCaseButton)
-            }
-            deleteCaseButton.addActionListener { deleteCase(testCase) }
-
-            title.text = if (statusGlyph != null) {
-                index.toString()
-            } else {
-                tabTitle(index, status)
-            }
-            title.foreground = foreground
-            title.font = title.font.deriveFont(Font.BOLD, title.font.size2D + caseTabTitleFontDelta())
-            title.alignmentX = Component.LEFT_ALIGNMENT
-
-            detail.text = tabDetail(testCase, status)
-            detail.foreground = theme.muted
-            detail.font = detail.font.deriveFont(Font.PLAIN, detail.font.size2D - 1.0f)
-            detail.alignmentX = Component.LEFT_ALIGNMENT
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = tabTooltip(testCase, status)
 
-            val content = JPanel(BorderLayout(if (theme.id == CphThemeId.AVE_MUJICA) 4 else 8, 0))
+            val content = JPanel()
+            content.layout = BoxLayout(content, BoxLayout.X_AXIS)
             content.background = background
-            val textPanel = JPanel()
-            textPanel.layout = BoxLayout(textPanel, BoxLayout.Y_AXIS)
-            textPanel.background = background
-            val titleRow = if (statusGlyph != null) {
-                JPanel().apply {
-                    layout = BoxLayout(this, BoxLayout.X_AXIS)
-                    background = tabBackground
-                    alignmentX = Component.LEFT_ALIGNMENT
-                    add(title)
-                    add(Box.createRigidArea(Dimension(2, 0)))
-                    add(statusGlyph)
-                }
-            } else {
-                null
-            }
-            textPanel.add(titleRow ?: title)
-            textPanel.add(detail)
-            if (theme.id == CphThemeId.AVE_MUJICA) {
-                val textWidth = aveMujicaCaseTextWidth(title, statusGlyph != null)
-                val textHeight = textPanel.preferredSize.height
-                textPanel.minimumSize = Dimension(textWidth, textHeight)
-                textPanel.preferredSize = Dimension(textWidth, textHeight)
-            }
-            val actionPanel = JPanel(GridBagLayout())
-            actionPanel.background = background
-            actionPanel.preferredSize = Dimension(caseDeleteActionWidth(), 1)
-            val deleteConstraints = GridBagConstraints().apply {
-                gridx = 0
-                gridy = 0
-                weightx = 1.0
-                weighty = 1.0
-                anchor = GridBagConstraints.NORTHEAST
-            }
-            actionPanel.add(deleteCaseButton, deleteConstraints)
-            content.add(textPanel, BorderLayout.CENTER)
-            content.add(actionPanel, BorderLayout.EAST)
+            content.isOpaque = false
             content.toolTipText = toolTipText
-            title.toolTipText = toolTipText
-            detail.toolTipText = toolTipText
-            textPanel.toolTipText = toolTipText
-            actionPanel.toolTipText = toolTipText
-            titleRow?.toolTipText = toolTipText
-            statusGlyph?.toolTipText = toolTipText
 
-            val selectListener = object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent) {
+            val indexLabel = JBLabel(index.toString())
+            indexLabel.foreground = if (selected) theme.text else style.foreground
+            indexLabel.font = indexLabel.font.deriveFont(Font.BOLD, indexLabel.font.size2D + 0.5f)
+            indexLabel.toolTipText = toolTipText
+            fixedComponentSize(indexLabel, Dimension(compactCaseIndexWidth(index), 18))
+
+            val icon = CompactStatusIcon(status, compactStatusColor(status, style))
+            icon.toolTipText = toolTipText
+
+            val detailText = compactTabDetail(testCase, status)
+            val detailLabel = JBLabel(detailText)
+            detailLabel.foreground = if (status == TabStatus.NOT_RUN || status == TabStatus.QUEUED) theme.muted else theme.text
+            detailLabel.font = detailLabel.font.deriveFont(Font.PLAIN, detailLabel.font.size2D - 1.0f)
+            detailLabel.toolTipText = toolTipText
+            val detailWidth = compactCaseDetailWidth(detailLabel, detailText)
+            if (detailWidth > 0) {
+                fixedComponentSize(detailLabel, Dimension(detailWidth, 18))
+            }
+            val closeButton = CompactCloseButton(theme.muted, theme.border).also {
+                it.active = selected
+                it.closeEnabled = selected && !running
+                it.toolTipText = CphText.current().deleteCase
+                it.addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (selected && it.closeEnabled) {
+                            e.consume()
+                            deleteCase(testCase)
+                        }
+                    }
+                })
+            }
+
+            val collapsedWidth = compactCaseCollapsedWidth(index)
+            val hoverExpandedWidth = compactCaseExpandedWidth(index, detailWidth, includeClose = false)
+            val selectedExpandedWidth = compactCaseExpandedWidth(index, detailWidth, includeClose = true)
+            var currentWidth = if (selected) selectedExpandedWidth else collapsedWidth
+            var targetWidth = currentWidth
+            setCompactCaseTabWidth(currentWidth)
+
+            val animationTimer = Timer(COMPACT_TAB_ANIMATION_DELAY_MILLIS, null)
+            animationTimer.addActionListener {
+                val delta = targetWidth - currentWidth
+                if (kotlin.math.abs(delta) <= 1) {
+                    currentWidth = targetWidth
+                    setCompactCaseTabWidth(currentWidth)
+                    animationTimer.stop()
+                    return@addActionListener
+                }
+                val step = (delta * COMPACT_TAB_ANIMATION_EASING).roundToInt()
+                currentWidth += when {
+                    delta > 0 -> step.coerceAtLeast(1).coerceAtMost(delta)
+                    else -> step.coerceAtMost(-1).coerceAtLeast(delta)
+                }
+                setCompactCaseTabWidth(currentWidth)
+            }
+
+            fun animateExpanded(expanded: Boolean) {
+                closeButton.active = selected
+                val nextTarget = when {
+                    selected -> selectedExpandedWidth
+                    expanded -> hoverExpandedWidth
+                    else -> collapsedWidth
+                }
+                if (targetWidth == nextTarget) return
+                targetWidth = nextTarget
+                if (!animationTimer.isRunning) {
+                    animationTimer.start()
+                }
+            }
+
+            content.add(indexLabel)
+            content.add(Box.createRigidArea(Dimension(3, 0)))
+            content.add(icon)
+            if (detailWidth > 0) {
+                content.add(Box.createRigidArea(Dimension(3, 0)))
+                content.add(detailLabel)
+            }
+            content.add(Box.createRigidArea(Dimension(4, 0)))
+            content.add(closeButton)
+
+            val selectListener = object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
                     selectCase(testCase)
                 }
             }
+            val hoverListener = object : MouseAdapter() {
+                override fun mouseEntered(e: MouseEvent) {
+                    animateExpanded(true)
+                }
+
+                override fun mouseExited(e: MouseEvent) {
+                    if (!selected && !isPointerInsideCaseTab()) {
+                        animateExpanded(false)
+                    }
+                }
+            }
             addMouseListener(selectListener)
+            addMouseListener(hoverListener)
             content.addMouseListener(selectListener)
-            title.addMouseListener(selectListener)
-            detail.addMouseListener(selectListener)
-            textPanel.addMouseListener(selectListener)
-            titleRow?.addMouseListener(selectListener)
-            statusGlyph?.addMouseListener(selectListener)
+            content.addMouseListener(hoverListener)
+            indexLabel.addMouseListener(selectListener)
+            indexLabel.addMouseListener(hoverListener)
+            icon.addMouseListener(selectListener)
+            icon.addMouseListener(hoverListener)
+            detailLabel.addMouseListener(selectListener)
+            detailLabel.addMouseListener(hoverListener)
+            closeButton.addMouseListener(hoverListener)
 
             add(content, BorderLayout.CENTER)
+        }
+
+        private fun setCompactCaseTabWidth(width: Int) {
+            val size = Dimension(width, 32)
+            preferredSize = size
+            minimumSize = size
+            maximumSize = size
+            revalidate()
+            parent?.revalidate()
+            repaint()
+        }
+
+        private fun isPointerInsideCaseTab(): Boolean {
+            val location = java.awt.MouseInfo.getPointerInfo()?.location ?: return false
+            SwingUtilities.convertPointFromScreen(location, this)
+            return contains(location)
         }
     }
 
@@ -4090,6 +4279,16 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             preferredSize = caseTabPreferredSize()
             minimumSize = caseTabMinimumSize()
             maximumSize = caseTabMaximumSize()
+            if (compactCaseTabsEnabled()) {
+                val compactSize = Dimension(44, 32)
+                preferredSize = compactSize
+                minimumSize = compactSize
+                maximumSize = compactSize
+                border = CompoundBorder(
+                    MatteBorder(1, 1, 2, 1, theme.border),
+                    EmptyBorder(2, 8, 2, 8),
+                )
+            }
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = CphText.current().addCase
 
@@ -4117,6 +4316,12 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
             addMouseListener(listener)
             add(button, BorderLayout.CENTER)
         }
+    }
+
+    private fun fixedComponentSize(component: JComponent, size: Dimension) {
+        component.minimumSize = size
+        component.preferredSize = size
+        component.maximumSize = size
     }
 
     private inner class LineNumberGutter(private val area: JBTextArea) : JComponent(), DocumentListener {
@@ -4212,6 +4417,145 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     ),
                 )
                 g2.fillRect(0, y, c.width, rowHeight)
+            } finally {
+                g2.dispose()
+            }
+        }
+    }
+
+    private class CompactStatusIcon(
+        private val status: TabStatus,
+        private val color: Color,
+    ) : JComponent() {
+        init {
+            val size = Dimension(15, 15)
+            preferredSize = size
+            minimumSize = size
+            maximumSize = size
+            isOpaque = false
+        }
+
+        override fun paintComponent(g: Graphics) {
+            super.paintComponent(g)
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = color
+                g2.stroke = BasicStroke(
+                    JBUIScale.scale(1.7f),
+                    BasicStroke.CAP_ROUND,
+                    BasicStroke.JOIN_ROUND,
+                )
+                val w = width.coerceAtLeast(1)
+                val h = height.coerceAtLeast(1)
+                val cx = w / 2
+                val cy = h / 2
+                val pad = JBUIScale.scale(3)
+                when (status) {
+                    TabStatus.OK,
+                    TabStatus.AC -> {
+                        g2.drawLine(pad, cy, cx - JBUIScale.scale(1), h - pad)
+                        g2.drawLine(cx - JBUIScale.scale(1), h - pad, w - pad, pad)
+                    }
+                    TabStatus.WA -> {
+                        g2.drawLine(pad, pad, w - pad, h - pad)
+                        g2.drawLine(w - pad, pad, pad, h - pad)
+                    }
+                    TabStatus.RE -> {
+                        val diamond = java.awt.Polygon(
+                            intArrayOf(cx, w - pad, cx, pad),
+                            intArrayOf(pad, cy, h - pad, cy),
+                            4,
+                        )
+                        g2.drawPolygon(diamond)
+                        drawBang(g2, cx, cy, h)
+                    }
+                    TabStatus.TLE -> {
+                        g2.drawOval(pad, pad, w - pad * 2, h - pad * 2)
+                        g2.drawLine(cx, cy, cx, pad + JBUIScale.scale(2))
+                        g2.drawLine(cx, cy, w - pad - JBUIScale.scale(1), cy)
+                    }
+                    TabStatus.CE,
+                    TabStatus.ERROR -> {
+                        val triangle = java.awt.Polygon(
+                            intArrayOf(cx, w - pad, pad),
+                            intArrayOf(pad, h - pad, h - pad),
+                            3,
+                        )
+                        g2.drawPolygon(triangle)
+                        drawBang(g2, cx, cy + JBUIScale.scale(1), h)
+                    }
+                    TabStatus.RUNNING -> {
+                        val triangle = java.awt.Polygon(
+                            intArrayOf(pad + JBUIScale.scale(1), w - pad, pad + JBUIScale.scale(1)),
+                            intArrayOf(pad, cy, h - pad),
+                            3,
+                        )
+                        g2.fillPolygon(triangle)
+                    }
+                    TabStatus.QUEUED -> {
+                        val r = JBUIScale.scale(2)
+                        listOf(cx - JBUIScale.scale(5), cx, cx + JBUIScale.scale(5)).forEach {
+                            g2.fillOval(it - r / 2, cy - r / 2, r, r)
+                        }
+                    }
+                    TabStatus.NOT_RUN -> {
+                        g2.drawOval(pad + JBUIScale.scale(1), pad + JBUIScale.scale(1), w - pad * 2 - JBUIScale.scale(2), h - pad * 2 - JBUIScale.scale(2))
+                    }
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        private fun drawBang(g2: Graphics2D, cx: Int, cy: Int, height: Int) {
+            g2.drawLine(cx, cy - JBUIScale.scale(4), cx, cy + JBUIScale.scale(1))
+            val dot = JBUIScale.scale(2)
+            g2.fillOval(cx - dot / 2, height - JBUIScale.scale(5), dot, dot)
+        }
+    }
+
+    private class CompactCloseButton(
+        private val activeColor: Color,
+        private val disabledColor: Color,
+    ) : JComponent() {
+        var active: Boolean = false
+            set(value) {
+                field = value
+                repaint()
+            }
+
+        var closeEnabled: Boolean = true
+            set(value) {
+                field = value
+                cursor = if (value) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
+                repaint()
+            }
+
+        init {
+            val size = Dimension(COMPACT_TAB_CLOSE_WIDTH, 18)
+            minimumSize = size
+            preferredSize = size
+            maximumSize = size
+            isOpaque = false
+        }
+
+        override fun paintComponent(g: Graphics) {
+            super.paintComponent(g)
+            if (!active) return
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = if (closeEnabled) activeColor else disabledColor
+                g2.stroke = BasicStroke(
+                    JBUIScale.scale(1.6f),
+                    BasicStroke.CAP_ROUND,
+                    BasicStroke.JOIN_ROUND,
+                )
+                val padX = JBUIScale.scale(3)
+                val padY = JBUIScale.scale(5)
+                g2.drawLine(padX, padY, width - padX, height - padY)
+                g2.drawLine(width - padX, padY, padX, height - padY)
             } finally {
                 g2.dispose()
             }
@@ -4604,6 +4948,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val TITLE_ACTION_FEEDBACK_VISIBLE_MILLIS = 1100
         private const val TAB_STRIP_BASE_HEIGHT = 62
         private const val AVE_MUJICA_TAB_STRIP_BASE_HEIGHT = 66
+        private const val COMPACT_TAB_STRIP_BASE_HEIGHT = 34
         private const val AVE_MUJICA_VISIBLE_ALPHA_THRESHOLD = 8
         private const val AVE_MUJICA_ICON_TRIM_PADDING_SCALE = 1.12
         private const val AVE_MUJICA_LINE_HIGHLIGHT_TILE = "/icons/avemujica/highlight/line_tile.png"
@@ -4642,7 +4987,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         private const val AVE_MUJICA_ANIMATION_CONFIGURED_PROPERTY = "cph.aveMujica.animationConfigured"
         private const val SETTINGS_ROW_PROPERTY = "cph.settings.row"
         private const val SETTINGS_TAB_CONFIGURED_PROPERTY = "cph.settingsTab.configured"
-        private const val SETTING_LABEL_WIDTH = 150
+        private const val SETTING_LABEL_WIDTH = 132
+        private const val COMPACT_TAB_MIN_WIDTH = 44
+        private const val COMPACT_TAB_INDEX_WIDTH = 14
+        private const val COMPACT_TAB_CLOSE_WIDTH = 12
+        private const val COMPACT_TAB_CHROME_WIDTH = 13
+        private const val COMPACT_TAB_ANIMATION_DELAY_MILLIS = 16
+        private const val COMPACT_TAB_ANIMATION_EASING = 0.35
         private const val BASE_FONT_PROPERTY = "cph.baseFont"
         private const val TITLE_ACTION_DEFAULT_TEXT_PROPERTY = "cph.titleAction.defaultText"
         private const val TITLE_ACTION_FEEDBACK_PROPERTY = "cph.titleAction.feedback"
@@ -4668,6 +5019,66 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 TabStatus.RUNNING,
                 TabStatus.QUEUED -> ""
                 TabStatus.NOT_RUN -> ""
+            }
+        }
+
+        private fun compactTabDetail(testCase: CphTestCase, status: TabStatus): String {
+            return when (status) {
+                TabStatus.OK,
+                TabStatus.AC,
+                TabStatus.WA,
+                TabStatus.TLE,
+                TabStatus.RE,
+                TabStatus.CE,
+                TabStatus.ERROR -> formatDuration(testCase.lastResult.durationMillis)
+                TabStatus.RUNNING -> ""
+                TabStatus.QUEUED -> ""
+                TabStatus.NOT_RUN -> ""
+            }
+        }
+
+        private fun compactCaseIndexWidth(index: Int): Int {
+            return COMPACT_TAB_INDEX_WIDTH + ((index.toString().length - 1).coerceAtLeast(0) * 8)
+        }
+
+        private fun compactCaseDetailWidth(label: JBLabel, detail: String): Int {
+            if (detail.isBlank()) return 0
+            return (label.getFontMetrics(label.font).stringWidth(detail) + 2)
+                .coerceAtLeast(24)
+        }
+
+        private fun compactCaseCollapsedWidth(index: Int): Int {
+            return (
+                compactCaseIndexWidth(index) +
+                    3 +
+                    15 +
+                    COMPACT_TAB_CHROME_WIDTH
+                ).coerceAtLeast(COMPACT_TAB_MIN_WIDTH)
+        }
+
+        private fun compactCaseExpandedWidth(index: Int, detailWidth: Int, includeClose: Boolean): Int {
+            val detailGap = if (detailWidth > 0) 3 else 0
+            val closeWidth = if (includeClose) 4 + COMPACT_TAB_CLOSE_WIDTH else 0
+            return (
+                compactCaseCollapsedWidth(index) +
+                    detailGap +
+                    detailWidth +
+                    closeWidth
+                ).coerceAtLeast(COMPACT_TAB_MIN_WIDTH)
+        }
+
+        private fun compactStatusColor(status: TabStatus, style: TabStyle): Color {
+            return when (status) {
+                TabStatus.OK,
+                TabStatus.AC -> style.foreground
+                TabStatus.WA -> style.foreground
+                TabStatus.RE -> Color(0xC35CFF)
+                TabStatus.TLE,
+                TabStatus.CE -> style.foreground
+                TabStatus.ERROR -> Color(0xFF6B6B)
+                TabStatus.RUNNING -> style.foreground
+                TabStatus.QUEUED,
+                TabStatus.NOT_RUN -> style.foreground
             }
         }
 

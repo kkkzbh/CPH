@@ -28,6 +28,7 @@ internal data class CphImportSettingsState(
     var sourceRoot: String = CPH_DEFAULT_SOURCE_ROOT,
     var pathTemplate: String = CPH_DEFAULT_PATH_TEMPLATE,
     var httpPath: String = CPH_DEFAULT_HTTP_PATH,
+    var cppTemplatePath: String = "",
     var cppTemplate: String = CPH_DEFAULT_CPP_TEMPLATE,
     var overwriteExisting: Boolean = false,
     var port: Int = CPH_DEFAULT_PORT,
@@ -50,6 +51,7 @@ internal class CphImportSettings : PersistentStateComponent<CphImportSettingsSta
             sourceRoot = if (isLegacyDefault) CPH_DEFAULT_SOURCE_ROOT else loadedSourceRoot,
             pathTemplate = if (isLegacyDefault) CPH_DEFAULT_PATH_TEMPLATE else loadedPathTemplate,
             httpPath = normalizeHttpPath(state.httpPath),
+            cppTemplatePath = state.cppTemplatePath.trim(),
             cppTemplate = state.cppTemplate.ifEmpty { CPH_DEFAULT_CPP_TEMPLATE },
             port = clampPort(state.port),
         )

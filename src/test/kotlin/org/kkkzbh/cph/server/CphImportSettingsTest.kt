@@ -51,4 +51,13 @@ class CphImportSettingsTest {
         assertEquals("cf", service.state.sourceRoot)
         assertEquals("custom/\${contest}/\${index}.cpp", service.state.pathTemplate)
     }
+
+    @Test
+    fun loadedTemplatePathIsTrimmed() {
+        val service = CphImportSettings()
+
+        service.loadState(CphImportSettingsState(cppTemplatePath = "  templates/main.cpp  "))
+
+        assertEquals("templates/main.cpp", service.state.cppTemplatePath)
+    }
 }

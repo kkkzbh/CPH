@@ -7,7 +7,7 @@ import com.intellij.openapi.components.Storage
 import com.intellij.util.messages.Topic
 
 internal data class CphPluginSettingsState(
-    var codeforcesRemoteSubmitEnabled: Boolean = false,
+    var codeforcesRemoteSubmitEnabled: Boolean = true,
     var selectedThemeId: String = CphThemeId.CLASSIC,
     var uiLanguage: String = CphUiLanguage.ZH_CN.id,
     var installedThemeVersions: MutableMap<String, String> = linkedMapOf(),
@@ -53,8 +53,8 @@ internal class CphPluginSettings : PersistentStateComponent<CphPluginSettingsSta
 internal object CphCodeforcesSubmitFeature {
     fun isEnabled(): Boolean =
         CphBuildFeatures.codeforcesSubmitEnabled &&
-            CphPluginSettings.getInstance().state.codeforcesRemoteSubmitEnabled
+            (CphBuildFeatures.isEap || CphPluginSettings.getInstance().state.codeforcesRemoteSubmitEnabled)
 
     fun actionEnabled(pluginEnabled: Boolean, singleFileModeEnabled: Boolean): Boolean =
-        CphBuildFeatures.codeforcesSubmitEnabled && pluginEnabled && singleFileModeEnabled
+        pluginEnabled && singleFileModeEnabled
 }
