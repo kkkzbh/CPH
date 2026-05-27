@@ -53,6 +53,21 @@
     return "";
   }
 
+  function hasInlineCloudflareChallenge(html) {
+    return /cf-turnstile|cf-turnstile-response|cf[_-]challenge|challenges\.cloudflare\.com/i
+      .test(String(html || ""));
+  }
+
+  function extractInlineCloudflareResponse(html) {
+    const text = String(html || "");
+    return match(text, /<(?:input|textarea)\b[^>]*name=["']cf-turnstile-response["'][^>]*\bvalue=["']([^"']+)["']/i) ||
+      match(text, /<(?:input|textarea)\b[^>]*\bvalue=["']([^"']+)["'][^>]*name=["']cf-turnstile-response["']/i);
+  }
+
+  function inlineCloudflareChallengeCompleted(html) {
+    return !hasInlineCloudflareChallenge(html) || Boolean(extractInlineCloudflareResponse(html).trim());
+  }
+
   function verdictFromSubmission(submission) {
     const raw = submission.verdict || "";
     const passed = Number(submission.passedTestCount || 0);
@@ -113,6 +128,9 @@
     extractCsrf,
     extractHandle,
     extractSubmitError,
+    hasInlineCloudflareChallenge,
+    extractInlineCloudflareResponse,
+    inlineCloudflareChallengeCompleted,
     verdictFromSubmission,
     matchesSubmission,
     submissionPageUrl,

@@ -25,6 +25,15 @@ assert.strictEqual(core.extractSubmitError('<span class="error for__source">Sour
 assert.strictEqual(core.extractSubmitError('<div class="alert alert-danger">Rejected by Codeforces</div>'), "Rejected by Codeforces");
 assert.strictEqual(core.extractSubmitError("You have submitted exactly the same code before"), "identical to a previous submission");
 
+assert.strictEqual(core.hasInlineCloudflareChallenge('<div class="cf-turnstile"></div>'), true);
+assert.strictEqual(core.hasInlineCloudflareChallenge('<iframe src="https://challenges.cloudflare.com/turnstile/v0/api.js"></iframe>'), true);
+assert.strictEqual(core.hasInlineCloudflareChallenge('<form><textarea name="source"></textarea></form>'), false);
+assert.strictEqual(core.inlineCloudflareChallengeCompleted('<div class="cf-turnstile"></div><input name="cf-turnstile-response" value="">'), false);
+assert.strictEqual(
+  core.inlineCloudflareChallengeCompleted('<div class="cf-turnstile"></div><input name="cf-turnstile-response" value="token">'),
+  true,
+);
+
 const running = core.verdictFromSubmission({ verdict: "TESTING", passedTestCount: 2 });
 assert.strictEqual(running.phase, "RUNNING");
 assert.strictEqual(running.display, "Running on test 3");

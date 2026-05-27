@@ -2,6 +2,10 @@
   if (root.__cphPageSubmitInstalled) return;
   root.__cphPageSubmitInstalled = true;
 
+  const FINAL_SUBMIT_DELAY_MS = 1500;
+  const INLINE_VERIFICATION_TIMEOUT_MS = 60000;
+  const INLINE_VERIFICATION_POLL_MS = 250;
+
   root.addEventListener("message", (event) => {
     if (event.source !== root) return;
     const msg = event.data;
@@ -39,8 +43,13 @@
     const debug = await fillSubmitCodeForm(form, job);
     root.postMessage({ type: "CPH_SUBMIT_PROGRESS", debug }, "*");
 
-    const button = await waitForSubmitButtonReady(form);
-    submitForm(form, button);
+    await waitForInlineCloudflareVerification(form);
+    await waitForSubmitButtonReady(form);
+    await sleep(FINAL_SUBMIT_DELAY_MS);
+    await waitForInlineCloudflareVerification(form);
+    revalidateSubmitCodeForm(form, job);
+    const finalButton = await waitForSubmitButtonReady(form);
+    submitForm(form, finalButton);
     return {
       handle,
       beforeMaxId,
@@ -170,6 +179,73 @@
       button = findSubmitButton(form);
     }
     return button;
+  }
+
+  async function waitForInlineCloudflareVerification(form) {
+    const started = Date.now();
+    while (true) {
+      const state = inlineCloudflareVerificationState(form);
+      if (state === "absent") return;
+      if (state === "complete") return;
+      if (Date.now() - started > INLINE_VERIFICATION_TIMEOUT_MS) {
+        throw new Error("Codeforces inline Cloudflare verification did not complete");
+      }
+      await sleep(INLINE_VERIFICATION_POLL_MS);
+    }
+  }
+
+  function inlineCloudflareVerificationState(form) {
+    const html = document.documentElement.outerHTML;
+    if (CphSubmitCore.inlineCloudflareChallengeCompleted(html)) {
+      return CphSubmitCore.hasInlineCloudflareChallenge(html) ? "complete" : "absent";
+    }
+    if (turnstileResponseFields().some((field) => String(field.value || "").trim())) {
+      return "complete";
+    }
+    if (hasInlineCloudflareWidget(form) || CphSubmitCore.hasInlineCloudflareChallenge(html)) {
+      return "pending";
+    }
+    return "absent";
+  }
+
+  function hasInlineCloudflareWidget(form) {
+    return inlineCloudflareNodes(form).length > 0 || inlineCloudflareNodes(document).length > 0;
+  }
+
+  function inlineCloudflareNodes(scope) {
+    const rootNode = scope || document;
+    return Array.from(rootNode.querySelectorAll([
+      ".cf-turnstile",
+      "[data-cf-challenge]",
+      "[name='cf-turnstile-response']",
+      "iframe[src*='challenges.cloudflare.com']",
+      "iframe[src*='turnstile']",
+    ].join(",")));
+  }
+
+  function turnstileResponseFields() {
+    return Array.from(document.querySelectorAll("input[name='cf-turnstile-response'], textarea[name='cf-turnstile-response']"));
+  }
+
+  function revalidateSubmitCodeForm(form, job) {
+    if (!document.documentElement.contains(form)) {
+      throw new Error("Codeforces Submit Code form disappeared before submit");
+    }
+    const expectedProblem = submittedProblemFieldValue(job);
+    const problemField = form.elements[submittedProblemFieldName(job.kind)] ||
+      form.elements.submittedProblemIndex ||
+      form.elements.submittedProblemCode;
+    if (!problemField || String(problemField.value).toLowerCase() !== String(expectedProblem).toLowerCase()) {
+      throw new Error(`Codeforces Submit Code page changed problem before submit: expected ${expectedProblem}`);
+    }
+    if (String(getField(form, "programTypeId")) !== String(job.programTypeId)) {
+      throw new Error("Codeforces Submit Code page changed language before submit");
+    }
+    const sourceField = form.elements.source || document.querySelector("#sourceCodeTextarea");
+    const sourceText = job.source == null ? "" : String(job.source);
+    if (!sourceField || sourceField.value !== sourceText) {
+      throw new Error("Codeforces Submit Code page changed source before submit");
+    }
   }
 
   function submitForm(form, button) {
