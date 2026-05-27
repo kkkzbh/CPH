@@ -6,11 +6,11 @@
         A CLion competitive-programming tool that manages sample cases for each target or single file, lets you run and compare outputs quickly, configure compiler options and shortcuts, and submit solutions to Codeforces from the active editor file.
     ]]></description>
     <change-notes><![CDATA[
-        <h3>1.2.4</h3>
+        <h3>1.2.5</h3>
         <ul>
-          <li>新增 Competitive Companion 导入题目的 C++ 模板配置，支持变量替换与外部模板文件。</li>
-          <li>支持从“设置”页面直接预览并管理模板内容，导入时自动写入新文件。</li>
-          <li>完善导入题目与快捷提交相关设置，优化样例导入和运行体验。</li>
+          <li>修复 Windows 纯单文件模式下 C/C++ File 样例运行可能找不到可执行文件的问题。</li>
+          <li>按平台可执行后缀解析 CLion 返回的运行文件，支持 .exe 等产物路径。</li>
+          <li>改进单文件构建重试清理逻辑，并补充运行路径解析回归测试。</li>
         </ul>
     ]]></change-notes>
 

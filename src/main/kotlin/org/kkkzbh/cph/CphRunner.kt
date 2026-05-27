@@ -697,13 +697,15 @@ internal class CphRunner(
     }
 
     private fun cleanupCppFileExecutableArtifacts(executable: File) {
-        val candidates = linkedSetOf(executable)
-        val parent = executable.parentFile
-        val name = executable.name
-        val baseName = name.removeSuffix(".exe")
-        if (parent != null && baseName != name) {
-            listOf(".ilk", ".pdb", ".obj", ".o").forEach { suffix ->
-                candidates.add(File(parent, baseName + suffix))
+        val candidates = linkedSetOf<File>()
+        cppFileRunFileCandidates(executable).forEach { candidate ->
+            candidates.add(candidate)
+            val parent = candidate.parentFile
+            val baseName = executableBaseName(candidate.name)
+            if (parent != null) {
+                listOf(".ilk", ".pdb", ".obj", ".o").forEach { suffix ->
+                    candidates.add(File(parent, baseName + suffix))
+                }
             }
         }
         candidates.forEach { file ->
@@ -780,8 +782,9 @@ internal class CphRunner(
     }
 
     private fun runFileFromPair(settings: com.intellij.execution.RunnerAndConfigurationSettings, pair: Any): File {
-        return pairComponent(pair, "component1") as? File
+        val runFile = pairComponent(pair, "component1") as? File
             ?: throw ExecutionException("CLion C/C++ File launcher did not return an executable for '${settings.name}'.")
+        return resolveCppFileRunFile(runFile)
     }
 
     private fun resolveCMakeLaunchPlan(
@@ -1017,6 +1020,55 @@ internal class CphRunner(
             } else {
                 "CPH Debug: $settingsName / $caseName"
             }
+        }
+
+        internal fun resolveCppFileRunFile(
+            runFile: File,
+            executableSuffixes: List<String> = platformExecutableSuffixes(),
+        ): File {
+            return cppFileRunFileCandidates(runFile, executableSuffixes).firstOrNull { it.isFile } ?: runFile
+        }
+
+        internal fun cppFileRunFileCandidates(
+            runFile: File,
+            executableSuffixes: List<String> = platformExecutableSuffixes(),
+        ): List<File> {
+            val candidates = linkedMapOf<String, File>()
+            val suffixes = sequenceOf("")
+                .plus(executableSuffixes.asSequence().mapNotNull(::normalizeExecutableSuffix))
+                .distinct()
+            suffixes.forEach { suffix ->
+                val candidate = if (suffix.isEmpty() || runFile.name.endsWith(suffix, ignoreCase = true)) {
+                    runFile
+                } else {
+                    File(runFile.parentFile, runFile.name + suffix)
+                }
+                candidates.putIfAbsent(candidate.absolutePath.replace('\\', '/'), candidate)
+            }
+            return candidates.values.toList()
+        }
+
+        private fun executableBaseName(name: String): String {
+            val suffix = platformExecutableSuffixes()
+                .mapNotNull(::normalizeExecutableSuffix)
+                .firstOrNull { name.endsWith(it, ignoreCase = true) }
+            return if (suffix == null) name else name.dropLast(suffix.length)
+        }
+
+        private fun platformExecutableSuffixes(): List<String> {
+            val pathExt = System.getenv("PATHEXT")
+                ?.split(File.pathSeparatorChar)
+                ?.mapNotNull(::normalizeExecutableSuffix)
+                ?.takeIf { it.isNotEmpty() }
+            if (pathExt != null) return pathExt
+
+            val osName = System.getProperty("os.name").orEmpty()
+            return if (osName.contains("windows", ignoreCase = true)) listOf(".exe") else emptyList()
+        }
+
+        private fun normalizeExecutableSuffix(suffix: String): String? {
+            val trimmed = suffix.trim().takeIf { it.isNotEmpty() && it != "." } ?: return null
+            return (if (trimmed.startsWith(".")) trimmed else ".$trimmed").lowercase()
         }
 
         private fun findMethodInHierarchy(type: Class<*>, name: String, parameterCount: Int): Method? {

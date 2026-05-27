@@ -12,6 +12,7 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.TimeUnit
 
@@ -74,6 +75,50 @@ class CphRunnerTest {
         assertEquals(original.charset, copy.charset)
         assertEquals(original.isRedirectErrorStream, copy.isRedirectErrorStream)
         assertEquals(original.parentEnvironmentType, copy.parentEnvironmentType)
+    }
+
+    @Test
+    fun cppFileRunFileResolvesPlatformExecutableCandidate() {
+        val root = Files.createTempDirectory("cph-run-file").toFile()
+        try {
+            val requested = File(root, "a-b")
+            val executable = File(root, "a-b.exe").also { it.writeText("") }
+
+            val resolved = CphRunner.resolveCppFileRunFile(requested, listOf(".exe"))
+
+            assertEquals(executable, resolved)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cppFileRunFileKeepsExactExecutableWhenPresent() {
+        val root = Files.createTempDirectory("cph-run-file").toFile()
+        try {
+            val requested = File(root, "a-b").also { it.writeText("") }
+            File(root, "a-b.exe").writeText("")
+
+            val resolved = CphRunner.resolveCppFileRunFile(requested, listOf(".exe"))
+
+            assertEquals(requested, resolved)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cppFileRunFileKeepsRequestedPathWhenNoCandidateExists() {
+        val root = Files.createTempDirectory("cph-run-file").toFile()
+        try {
+            val requested = File(root, "a-b")
+
+            val resolved = CphRunner.resolveCppFileRunFile(requested, listOf(".exe"))
+
+            assertEquals(requested, resolved)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test
