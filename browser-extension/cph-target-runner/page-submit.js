@@ -2,9 +2,9 @@
   if (root.__cphPageSubmitInstalled) return;
   root.__cphPageSubmitInstalled = true;
 
-  const FINAL_SUBMIT_DELAY_MS = 1500;
   const INLINE_VERIFICATION_TIMEOUT_MS = 60000;
   const INLINE_VERIFICATION_POLL_MS = 250;
+  const SUBMIT_NAVIGATION_DELAY_MS = 150;
 
   root.addEventListener("message", (event) => {
     if (event.source !== root) return;
@@ -33,6 +33,9 @@
     if (/\/enter\?back=|handleOrEmail|password/i.test(document.documentElement.innerHTML)) {
       throw new Error("please log in to Codeforces in this browser");
     }
+    if (isFullPageCloudflareChallenge()) {
+      throw new Error("Codeforces Cloudflare challenge is blocking the Submit Code page");
+    }
 
     const form = await waitForSubmitForm();
     const handle = CphSubmitCore.extractHandle(document.documentElement.outerHTML) || await fetchCurrentHandle();
@@ -45,11 +48,8 @@
 
     await waitForInlineCloudflareVerification(form);
     await waitForSubmitButtonReady(form);
-    await sleep(FINAL_SUBMIT_DELAY_MS);
-    await waitForInlineCloudflareVerification(form);
     revalidateSubmitCodeForm(form, job);
-    const finalButton = await waitForSubmitButtonReady(form);
-    submitForm(form, finalButton);
+    submitPreparedForm(form);
     return {
       handle,
       beforeMaxId,
@@ -69,6 +69,9 @@
         if (form) {
           clearInterval(timer);
           resolve(form);
+        } else if (isFullPageCloudflareChallenge()) {
+          clearInterval(timer);
+          reject(new Error("Codeforces Cloudflare challenge is blocking the Submit Code page"));
         } else if (Date.now() - started > 15000) {
           clearInterval(timer);
           reject(new Error("could not find the Codeforces Submit Code form"));
@@ -83,6 +86,14 @@
       form.querySelector('[name="source"]') &&
       (form.querySelector('[name="submittedProblemIndex"]') || form.querySelector('[name="submittedProblemCode"]'))
     );
+  }
+
+  function isFullPageCloudflareChallenge() {
+    return isFullPageCloudflareChallengeHtml(document.documentElement.outerHTML);
+  }
+
+  function isFullPageCloudflareChallengeHtml(html) {
+    return /Just a moment|cf-mitigated|cf_chl|challenge-platform|Enable JavaScript and cookies to continue/i.test(html);
   }
 
   async function fillSubmitCodeForm(form, job) {
@@ -224,7 +235,11 @@
   }
 
   function turnstileResponseFields() {
-    return Array.from(document.querySelectorAll("input[name='cf-turnstile-response'], textarea[name='cf-turnstile-response']"));
+    return Array.from(document.querySelectorAll([
+      "input[name='cf-turnstile-response']",
+      "textarea[name='cf-turnstile-response']",
+      "input[name='turnstileToken']",
+    ].join(",")));
   }
 
   function revalidateSubmitCodeForm(form, job) {
@@ -248,14 +263,25 @@
     }
   }
 
-  function submitForm(form, button) {
-    if (button && typeof button.click === "function") {
-      button.click();
-    } else if (typeof form.requestSubmit === "function") {
-      form.requestSubmit();
-    } else {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      form.submit();
+  function submitPreparedForm(form) {
+    refreshSubmitFrameFields(form);
+    removeEmptySourceFileEncoding(form);
+    root.setTimeout(() => form.submit(), SUBMIT_NAVIGATION_DELAY_MS);
+  }
+
+  function refreshSubmitFrameFields(form) {
+    if (form.elements.ftaa && root._ftaa) setField(form, "ftaa", root._ftaa, false);
+    if (form.elements.bfaa && root._bfaa) setField(form, "bfaa", root._bfaa, false);
+    if (form.elements._tta && root.Codeforces && typeof root.Codeforces.tta === "function") {
+      setField(form, "_tta", root.Codeforces.tta(), false);
+    }
+  }
+
+  function removeEmptySourceFileEncoding(form) {
+    if (form.getAttribute("enctype") !== "multipart/form-data") return;
+    const sourceFiles = form.querySelectorAll(".table-form input[name='sourceFile']");
+    if (sourceFiles.length === 1 && sourceFiles[0].files && sourceFiles[0].files.length === 0) {
+      form.removeAttribute("enctype");
     }
   }
 

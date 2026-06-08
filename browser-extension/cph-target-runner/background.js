@@ -146,26 +146,30 @@ async function submitInCodeforcesPage(problemTab, job, port) {
     files: ["submit-core.js", "page-submit.js"],
     world: "MAIN",
   });
-  await chrome.scripting.executeScript({
+  const submitResults = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
-    func: (submitJob) => {
+    func: async (submitJob) => {
       if (!globalThis.CphPageSubmit || typeof globalThis.CphPageSubmit.run !== "function") {
         throw new Error("Codeforces Submit Code page helper did not install");
       }
-      globalThis.CphPageSubmit.run(submitJob).catch((err) => {
-        console.error("[CPH Target Runner] Codeforces page submit failed", err);
-      });
-      return true;
+      return globalThis.CphPageSubmit.run(submitJob);
     },
     args: [{ ...job, __cphPort: port }],
   });
+  const submitResult = submitResults && submitResults[0] && submitResults[0].result;
+  if (!submitResult || !submitResult.handle) {
+    throw new Error("Codeforces Submit Code page did not start submission");
+  }
+  const resultHandle = submitResult.handle || handle;
+  const resultBeforeMaxId = Number(submitResult.beforeMaxId || beforeMaxId);
+  const resultStartedAtSeconds = Number(submitResult.startedAtSeconds || startedAtSeconds);
   await sendUpdate(port, job, "SUBMITTING", `→ ${job.displayId}  Submit request sent; waiting for Codeforces id…`);
   const submission = await waitForNewSubmission(
-    handle,
+    resultHandle,
     job,
-    beforeMaxId,
-    startedAtSeconds,
+    resultBeforeMaxId,
+    resultStartedAtSeconds,
     tabId,
   );
   if (!submission) {
@@ -173,7 +177,7 @@ async function submitInCodeforcesPage(problemTab, job, port) {
     throw new Error(pageError || "Codeforces Submit Code page did not create a submission");
   }
   return {
-    handle,
+    handle: resultHandle,
     submissionId: submission.id,
     pageUrl: CphSubmitCore.submissionPageUrl(submission),
   };

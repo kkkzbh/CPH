@@ -28,6 +28,8 @@ assert.strictEqual(core.extractSubmitError("You have submitted exactly the same 
 assert.strictEqual(core.hasInlineCloudflareChallenge('<div class="cf-turnstile"></div>'), true);
 assert.strictEqual(core.hasInlineCloudflareChallenge('<iframe src="https://challenges.cloudflare.com/turnstile/v0/api.js"></iframe>'), true);
 assert.strictEqual(core.hasInlineCloudflareChallenge('<form><textarea name="source"></textarea></form>'), false);
+assert.strictEqual(core.hasInlineCloudflareChallenge('<link rel="preconnect" href="https://challenges.cloudflare.com">'), false);
+assert.strictEqual(core.hasInlineCloudflareChallenge('<input type="hidden" name="turnstileToken" class="hidden-turnstile-token" value="">'), false);
 assert.strictEqual(core.inlineCloudflareChallengeCompleted('<div class="cf-turnstile"></div><input name="cf-turnstile-response" value="">'), false);
 assert.strictEqual(
   core.inlineCloudflareChallengeCompleted('<div class="cf-turnstile"></div><input name="cf-turnstile-response" value="token">'),

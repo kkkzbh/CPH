@@ -54,7 +54,7 @@
   }
 
   function hasInlineCloudflareChallenge(html) {
-    return /cf-turnstile|cf-turnstile-response|cf[_-]challenge|challenges\.cloudflare\.com/i
+    return /<(?:div|iframe|input|textarea)\b[^>]*(?:cf-turnstile|cf-turnstile-response|data-cf-challenge|challenges\.cloudflare\.com)[^>]*>/i
       .test(String(html || ""));
   }
 

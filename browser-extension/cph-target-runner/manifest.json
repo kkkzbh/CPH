@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CPH Target Runner",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Browser companion for CPH Target Runner: submits Codeforces solutions with your existing browser login session.",
   "permissions": ["tabs", "alarms", "scripting", "storage"],
   "host_permissions": [
