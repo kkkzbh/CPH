@@ -6,8 +6,8 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      publish_target:
-        description: What to publish after verification
+      plugin_target:
+        description: Which JetBrains plugin channel to publish after verification
         required: true
         default: verify_only
         type: choice
@@ -16,6 +16,14 @@ on:
           - stable
           - eap
           - both
+      browser_target:
+        description: Whether to publish the browser extension release
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - release
 
 permissions:
   contents: write
@@ -32,9 +40,11 @@ jobs:
       eap_plugin_version: ${{ steps.versions.outputs.eap_plugin_version }}
       browser_extension_version: ${{ steps.versions.outputs.browser_extension_version }}
       theme_version: ${{ steps.versions.outputs.theme_version }}
-      publish_target: ${{ steps.target.outputs.publish_target }}
+      plugin_target: ${{ steps.target.outputs.plugin_target }}
+      browser_target: ${{ steps.target.outputs.browser_target }}
       publish_stable: ${{ steps.target.outputs.publish_stable }}
       publish_eap: ${{ steps.target.outputs.publish_eap }}
+      publish_browser: ${{ steps.target.outputs.publish_browser }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -113,22 +123,26 @@ jobs:
           echo "Ave Mujica theme version: ${theme_version}"
           echo "Ave Mujica theme minimum plugin version: ${theme_min_plugin_version}"
 
-      - name: Resolve publish target
+      - name: Resolve publish targets
         id: target
         shell: bash
         env:
-          INPUT_TARGET: ${{ github.event.inputs.publish_target }}
+          INPUT_PLUGIN_TARGET: ${{ github.event.inputs.plugin_target }}
+          INPUT_BROWSER_TARGET: ${{ github.event.inputs.browser_target }}
         run: |
           set -euo pipefail
 
-          publish_target="verify_only"
+          plugin_target="verify_only"
+          browser_target="none"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            publish_target="${INPUT_TARGET:-verify_only}"
+            plugin_target="${INPUT_PLUGIN_TARGET:-verify_only}"
+            browser_target="${INPUT_BROWSER_TARGET:-none}"
           fi
 
           publish_stable="false"
           publish_eap="false"
-          case "${publish_target}" in
+          publish_browser="false"
+          case "${plugin_target}" in
             verify_only)
               ;;
             stable)
@@ -142,32 +156,128 @@ jobs:
               publish_eap="true"
               ;;
             *)
-              echo "::error::Unknown publish_target: ${publish_target}"
+              echo "::error::Unknown plugin_target: ${plugin_target}"
               exit 1
               ;;
           esac
 
-          echo "publish_target=${publish_target}" >> "${GITHUB_OUTPUT}"
+          case "${browser_target}" in
+            none)
+              ;;
+            release)
+              publish_browser="true"
+              ;;
+            *)
+              echo "::error::Unknown browser_target: ${browser_target}"
+              exit 1
+              ;;
+          esac
+
+          echo "plugin_target=${plugin_target}" >> "${GITHUB_OUTPUT}"
+          echo "browser_target=${browser_target}" >> "${GITHUB_OUTPUT}"
           echo "publish_stable=${publish_stable}" >> "${GITHUB_OUTPUT}"
           echo "publish_eap=${publish_eap}" >> "${GITHUB_OUTPUT}"
+          echo "publish_browser=${publish_browser}" >> "${GITHUB_OUTPUT}"
 
-          echo "Publish target: ${publish_target}"
+          echo "Plugin target: ${plugin_target}"
+          echo "Browser target: ${browser_target}"
           echo "Publish stable: ${publish_stable}"
           echo "Publish EAP: ${publish_eap}"
+          echo "Publish browser extension: ${publish_browser}"
 
-      - name: Run tests and build both variants
-        run: ./gradlew --stacktrace buildReleaseVariants
+      - name: Run tests and build requested assets
+        shell: bash
+        env:
+          PLUGIN_TARGET: ${{ steps.target.outputs.plugin_target }}
+          BROWSER_TARGET: ${{ steps.target.outputs.browser_target }}
+          PUBLISH_STABLE: ${{ steps.target.outputs.publish_stable }}
+          PUBLISH_EAP: ${{ steps.target.outputs.publish_eap }}
+          PUBLISH_BROWSER: ${{ steps.target.outputs.publish_browser }}
+        run: |
+          set -euo pipefail
+
+          full_verify="false"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" || ("${PLUGIN_TARGET}" == "verify_only" && "${BROWSER_TARGET}" == "none") ]]; then
+            full_verify="true"
+          fi
+
+          if [[ "${full_verify}" == "true" || "${PUBLISH_BROWSER}" == "true" ]]; then
+            node browser-extension/cph-target-runner/submit-core.test.js
+            node --check browser-extension/cph-target-runner/background.js
+            node --check browser-extension/cph-target-runner/page-submit.js
+            node --check browser-extension/cph-target-runner/submit-core.js
+            node --check browser-extension/cph-target-runner/extension-core.js
+          fi
+
+          if [[ "${full_verify}" == "true" || ("${PUBLISH_STABLE}" == "true" && "${PUBLISH_EAP}" == "true" && "${PUBLISH_BROWSER}" == "true") ]]; then
+            ./gradlew --stacktrace buildReleaseVariants
+            exit 0
+          fi
+
+          if [[ "${PUBLISH_STABLE}" == "true" ]]; then
+            ./gradlew --stacktrace test buildPlugin -PcphVariant=stable
+          fi
+
+          if [[ "${PUBLISH_EAP}" == "true" ]]; then
+            ./gradlew --stacktrace test buildPlugin packageAveMujicaTheme -PcphVariant=eap
+          fi
+
+          if [[ "${PUBLISH_BROWSER}" == "true" ]]; then
+            ./gradlew --stacktrace test packageBrowserExtension
+          fi
+
+      - name: Collect release assets
+        shell: bash
+        env:
+          PLUGIN_TARGET: ${{ steps.target.outputs.plugin_target }}
+          BROWSER_TARGET: ${{ steps.target.outputs.browser_target }}
+          PUBLISH_STABLE: ${{ steps.target.outputs.publish_stable }}
+          PUBLISH_EAP: ${{ steps.target.outputs.publish_eap }}
+          PUBLISH_BROWSER: ${{ steps.target.outputs.publish_browser }}
+          STABLE_PLUGIN_VERSION: ${{ steps.versions.outputs.stable_plugin_version }}
+          EAP_PLUGIN_VERSION: ${{ steps.versions.outputs.eap_plugin_version }}
+          BROWSER_EXTENSION_VERSION: ${{ steps.versions.outputs.browser_extension_version }}
+          THEME_VERSION: ${{ steps.versions.outputs.theme_version }}
+        run: |
+          set -euo pipefail
+
+          full_verify="false"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" || ("${PLUGIN_TARGET}" == "verify_only" && "${BROWSER_TARGET}" == "none") ]]; then
+            full_verify="true"
+          fi
+
+          mkdir -p release-assets
+
+          copy_asset() {
+            local path="$1"
+            if [[ ! -f "${path}" ]]; then
+              echo "::error::Missing release asset: ${path}"
+              exit 1
+            fi
+            cp "${path}" release-assets/
+          }
+
+          if [[ "${full_verify}" == "true" || "${PUBLISH_STABLE}" == "true" ]]; then
+            copy_asset "build/distributions/clion-cph-target-runner-${STABLE_PLUGIN_VERSION}.zip"
+          fi
+
+          if [[ "${full_verify}" == "true" || "${PUBLISH_EAP}" == "true" ]]; then
+            copy_asset "build/distributions/clion-cph-target-runner-${EAP_PLUGIN_VERSION}.zip"
+            copy_asset "build/distributions/cph-theme-avemujica-${THEME_VERSION}.zip"
+            copy_asset "build/distributions/cph-theme-avemujica.json"
+          fi
+
+          if [[ "${full_verify}" == "true" || "${PUBLISH_BROWSER}" == "true" ]]; then
+            copy_asset "build/distributions/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
+          fi
+
+          ls -la release-assets
 
       - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
           name: release-assets
-          path: |
-            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.stable_plugin_version }}.zip
-            build/distributions/clion-cph-target-runner-${{ steps.versions.outputs.eap_plugin_version }}.zip
-            build/distributions/cph-target-runner-browser-${{ steps.versions.outputs.browser_extension_version }}.zip
-            build/distributions/cph-theme-avemujica-${{ steps.versions.outputs.theme_version }}.zip
-            build/distributions/cph-theme-avemujica.json
+          path: release-assets/*
           if-no-files-found: error
 
   release_stable:
@@ -177,7 +287,6 @@ jobs:
     env:
       RELEASE_TAG: v${{ needs.verify.outputs.stable_plugin_version }}
       STABLE_PLUGIN_VERSION: ${{ needs.verify.outputs.stable_plugin_version }}
-      BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
     steps:
       - name: Download release assets
         uses: actions/download-artifact@v4
@@ -194,14 +303,9 @@ jobs:
           set -euo pipefail
 
           plugin_asset="release-assets/clion-cph-target-runner-${STABLE_PLUGIN_VERSION}.zip"
-          browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
 
           if [[ ! -f "${plugin_asset}" ]]; then
             echo "::error::Missing stable plugin release asset: ${plugin_asset}"
-            exit 1
-          fi
-          if [[ ! -f "${browser_asset}" ]]; then
-            echo "::error::Missing browser extension release asset: ${browser_asset}"
             exit 1
           fi
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
@@ -211,10 +315,9 @@ jobs:
 
           gh release create "${RELEASE_TAG}" \
             "${plugin_asset}" \
-            "${browser_asset}" \
             --target "${GITHUB_SHA}" \
             --title "CPH Target Runner ${STABLE_PLUGIN_VERSION}" \
-            --notes "Stable release for CPH Target Runner ${STABLE_PLUGIN_VERSION}."
+            --notes "Stable JetBrains plugin release for CPH Target Runner ${STABLE_PLUGIN_VERSION}."
 
   release_eap:
     needs: verify
@@ -223,7 +326,6 @@ jobs:
     env:
       RELEASE_TAG: v${{ needs.verify.outputs.eap_plugin_version }}
       EAP_PLUGIN_VERSION: ${{ needs.verify.outputs.eap_plugin_version }}
-      BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
     steps:
       - name: Download release assets
         uses: actions/download-artifact@v4
@@ -240,14 +342,9 @@ jobs:
           set -euo pipefail
 
           plugin_asset="release-assets/clion-cph-target-runner-${EAP_PLUGIN_VERSION}.zip"
-          browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
 
           if [[ ! -f "${plugin_asset}" ]]; then
             echo "::error::Missing EAP plugin release asset: ${plugin_asset}"
-            exit 1
-          fi
-          if [[ ! -f "${browser_asset}" ]]; then
-            echo "::error::Missing browser extension release asset: ${browser_asset}"
             exit 1
           fi
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
@@ -257,11 +354,50 @@ jobs:
 
           gh release create "${RELEASE_TAG}" \
             "${plugin_asset}" \
-            "${browser_asset}" \
             --target "${GITHUB_SHA}" \
             --title "CPH Target Runner ${EAP_PLUGIN_VERSION}" \
-            --notes "EAP prerelease for CPH Target Runner ${EAP_PLUGIN_VERSION}." \
+            --notes "EAP JetBrains plugin prerelease for CPH Target Runner ${EAP_PLUGIN_VERSION}." \
             --prerelease
+
+  release_browser:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.publish_browser == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: browser-v${{ needs.verify.outputs.browser_extension_version }}
+      BROWSER_EXTENSION_VERSION: ${{ needs.verify.outputs.browser_extension_version }}
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create browser extension GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          browser_asset="release-assets/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
+
+          if [[ ! -f "${browser_asset}" ]]; then
+            echo "::error::Missing browser extension release asset: ${browser_asset}"
+            exit 1
+          fi
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::GitHub Release ${RELEASE_TAG} already exists. Bump browserExtensionVersion before publishing."
+            exit 1
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            "${browser_asset}" \
+            --target "${GITHUB_SHA}" \
+            --title "CPH Target Runner Browser Extension ${BROWSER_EXTENSION_VERSION}" \
+            --notes "Browser extension release for CPH Target Runner ${BROWSER_EXTENSION_VERSION}." \
+            --latest=false
 
   release_theme:
     needs: verify
