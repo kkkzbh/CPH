@@ -1,49 +1,51 @@
 # CPH Target Runner
 
-CPH Target Runner 是一个面向 CLion 的 C++ 竞赛刷题插件。它把样例管理、运行结果、输出对比、单文件模式、题目导入和 Codeforces 提交集中到右侧 `CPH` 工具窗口，让 CLion 里的本地调试流程接近 VS Code CPH。
+English | [简体中文](README.zh-CN.md)
 
-[在线文档](https://cph.kkkzbh.cn/) | [浏览器扩展安装说明](INSTALL_EXTENSION.md)
+CPH Target Runner is a CLion plugin for C++ competitive programming. It brings sample management, run results, output comparison, single-file mode, problem import, and Codeforces submission into the right-side `CPH` tool window, making the CLion local debugging workflow close to VS Code CPH.
 
-![CPH 主界面：样例运行和输出差异定位](docs/assets/marketplace-main.png)
+[Documentation](https://cph.kkkzbh.cn/) | [Browser extension install guide](INSTALL_EXTENSION.md)
 
-## 核心功能
+![CPH main UI: sample runs and output diff location](docs/assets/marketplace-main.png)
 
-- 为当前 CMake Target 或单个 `.cpp` 文件保存独立样例。
-- 管理多个 Case，支持启用/禁用、单独运行和一键运行全部样例。
-- 自动对比标准输出和期望输出，高亮定位 WA 差异。
-- 提供纯单文件模式，适合不想维护多个 CMake Target 的日常竞赛刷题。
-- 支持工作目录、时间限制、C++ 标准、编译选项、GCC bits 预编译头和全局快捷键。
-- 内置 Competitive Companion 接收服务，可从 Codeforces、AtCoder、洛谷、Kattis 等平台导入题目和样例。
-- 配合 CPH Target Runner 浏览器扩展，可将当前 `.cpp` 提交到浏览器当前打开的 Codeforces 题目。
+## Features
 
-## 快速开始
+- Save independent samples for the current CMake target or a single `.cpp` file.
+- Manage multiple cases with enable/disable, run-one, and run-all workflows.
+- Compare stdout against expected output and highlight WA differences.
+- Provide pure single-file mode for daily contest practice without maintaining many CMake targets.
+- Configure working directory, time limit, C++ standard, compiler options, GCC bits precompiled header, and global shortcuts.
+- Receive problems and samples from Codeforces, AtCoder, Luogu, Kattis, and other platforms through Competitive Companion.
+- Submit the current `.cpp` file to the Codeforces problem open in the browser when used with the CPH Target Runner browser extension.
 
-1. 在 CLion 中打开右侧 `CPH` 工具窗口。
-2. 点击 `启动 CPH` 启用当前项目。
-3. 在 Case 中填写输入和期望输出。
-4. 点击 `运行` 测试当前 Case，或点击顶部运行按钮执行全部启用 Case。
+## Quick Start
 
-运行后，工具窗口会显示标准输出、期望输出和最近一次运行结果。结果不一致时，CPH 会高亮差异行，方便快速定位问题。
+1. Open the right-side `CPH` tool window in CLion.
+2. Click `Start CPH` to enable the current project.
+3. Fill in input and expected output for a case.
+4. Click `Run` to test the current case, or use the top run button to execute all enabled cases.
 
-![CPH 设置界面：单文件模式、编译选项和快捷键](docs/assets/marketplace-settings.png)
+After a run, the tool window shows stdout, expected output, and the latest result. When the output differs, CPH highlights the differing lines for quick debugging.
 
-## 单文件模式
+![CPH settings UI: single-file mode, compiler options, and shortcuts](docs/assets/marketplace-settings.png)
 
-如果你主要用 CLion 写竞赛题，推荐启用纯单文件模式。启用后，一个 `.cpp` 文件就是一个独立运行目标，CPH 会随着当前编辑文件自动切换对应样例，不需要手动维护多个 CMake Target。
+## Single-File Mode
 
-常用配置都在 `Settings / Tools / CPH Target Runner` 中，包括工作目录、C++ 标准、编译选项、输出比较方式和快捷键。
+If you mainly use CLion for contest problems, pure single-file mode is recommended. After it is enabled, each `.cpp` file becomes an independent run target, and CPH switches samples with the current editor file without requiring manual CMake target maintenance.
 
-## 导入题目
+Common options are under `Settings / Tools / CPH Target Runner`, including working directory, C++ standard, compiler options, output comparison mode, and shortcuts.
 
-CPH 内置 Competitive Companion 接收服务，默认监听 `127.0.0.1:10043`。安装 Competitive Companion 后，在题面点击浏览器扩展按钮，插件会自动创建源码文件、创建单文件运行配置、填入样例并打开文件。
+## Import Problems
 
-更详细的路径模板、变量和平台规则见 [在线文档](https://cph.kkkzbh.cn/)。
+CPH includes a Competitive Companion receiver, listening on `127.0.0.1:10043` by default. After installing Competitive Companion, click the browser extension button on a problem page; the plugin creates the source file, creates a single-file run configuration, fills in samples, and opens the file.
 
-## 提交到 Codeforces
+See the [documentation](https://cph.kkkzbh.cn/) for path templates, variables, and platform rules.
 
-安装 [CPH Target Runner 浏览器扩展](INSTALL_EXTENSION.md) 后，可以从工具窗顶部的提交按钮把当前编辑器中的 `.cpp` 文件提交到浏览器当前打开的 Codeforces 题目。
+## Submit to Codeforces
 
-插件不保存 Codeforces 账号、密码或 Cookie；提交使用浏览器当前登录态完成。
+After installing the [CPH Target Runner browser extension](INSTALL_EXTENSION.md), use the submit button in the tool window to submit the current editor `.cpp` file to the Codeforces problem currently open in the browser.
+
+The plugin does not store Codeforces accounts, passwords, or cookies. Submission uses the browser's current login session.
 
 ## License
 
