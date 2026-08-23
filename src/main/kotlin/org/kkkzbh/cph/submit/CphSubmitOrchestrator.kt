@@ -15,6 +15,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphProjectActivationService
 import org.kkkzbh.cph.CphText
 import java.util.UUID
 
@@ -93,7 +94,7 @@ internal class CphSubmitOrchestrator(private val project: Project) {
             publishIdle()
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             publishIdle()
             return
         }

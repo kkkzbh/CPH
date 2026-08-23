@@ -68,7 +68,7 @@ internal class CphSingleFileModeService(private val project: Project) {
     private fun syncForFile(file: VirtualFile?, force: Boolean = false) {
         if (applyingSelection) return
         val state = stateService.getState()
-        if (!state.cphEnabled) return
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) return
         val previousPath = lastObservedPath
         lastObservedPath = file?.path
         val request = CphSingleFileModePolicy.request(

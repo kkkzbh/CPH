@@ -10,7 +10,7 @@ import com.intellij.openapi.wm.IdeFocusManager
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import org.kkkzbh.cph.CphCodeforcesSubmitFeature
-import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphProjectActivationService
 import org.kkkzbh.cph.submit.CphActiveTabService
 import org.kkkzbh.cph.submit.CphSubmitBridgeUpdate
 import org.kkkzbh.cph.submit.CphSubmitOrchestrator
@@ -132,7 +132,7 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respond(exchange, 503, "No open project to receive payload")
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             respond(exchange, 403, "CPH is not enabled for this project")
             return
         }
@@ -171,7 +171,7 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respond(exchange, 503, "No open project")
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             respond(exchange, 403, "CPH is not enabled for this project")
             return
         }
@@ -200,7 +200,7 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respondNoContent(exchange)
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             respondNoContent(exchange)
             return
         }
@@ -235,7 +235,7 @@ internal class CphCompetitiveCompanionServer : Disposable {
             respond(exchange, 503, "No open project")
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             respond(exchange, 403, "CPH is not enabled for this project")
             return
         }

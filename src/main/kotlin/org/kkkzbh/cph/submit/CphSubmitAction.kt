@@ -5,6 +5,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import org.kkkzbh.cph.CphCodeforcesSubmitFeature
 import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphProjectActivationService
 
 internal class CphSubmitAction : AnAction("CPH: Submit Current File to Codeforces") {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
@@ -12,7 +13,7 @@ internal class CphSubmitAction : AnAction("CPH: Submit Current File to Codeforce
     override fun update(e: AnActionEvent) {
         val project = e.project
         e.presentation.isEnabled = project != null &&
-            CphStateService.getInstance(project).state.cphEnabled &&
+            CphProjectActivationService.getInstance(project).isEnabled() &&
             CphCodeforcesSubmitFeature.actionEnabled(
                 pluginEnabled = CphCodeforcesSubmitFeature.isEnabled(),
                 singleFileModeEnabled = CphStateService.getInstance(project).state.singleFileModeEnabled,

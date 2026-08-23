@@ -4,12 +4,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import org.kkkzbh.cph.CphShortcutDispatcher
 import org.kkkzbh.cph.CphSingleFileModeService
-import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphProjectActivationService
 
 internal class CphCompetitiveCompanionStarter : ProjectActivity {
     override suspend fun execute(project: Project) {
         CphShortcutDispatcher.getInstance(project)
-        if (CphStateService.getInstance(project).state.cphEnabled) {
+        if (CphProjectActivationService.getInstance(project).isEnabled()) {
             CphSingleFileModeService.getInstance(project).start()
         }
         CphCompetitiveCompanionServer.getInstance().init()

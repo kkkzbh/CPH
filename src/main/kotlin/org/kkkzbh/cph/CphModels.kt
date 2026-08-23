@@ -1,12 +1,13 @@
 package org.kkkzbh.cph
 
-import com.intellij.openapi.components.PersistentStateComponent
+import com.intellij.openapi.components.PersistentStateComponentWithModificationTracker
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val CPH_DEFAULT_TIMEOUT_MILLIS = 1000L
 internal const val CPH_MIN_TIMEOUT_MILLIS = 100L
@@ -90,7 +91,6 @@ data class CphState(
     var targets: MutableMap<String, CphTargetCases> = linkedMapOf(),
     var compileSettings: CphGlobalCompileSettings = CphGlobalCompileSettings(),
     var ui: CphUiState = CphUiState(),
-    var cphEnabled: Boolean = false,
     var singleFileModeEnabled: Boolean = true,
     var singleFileWorkingDirectory: String = CPH_DEFAULT_SINGLE_FILE_WORKING_DIRECTORY,
 )
@@ -105,15 +105,15 @@ internal interface CphCasesChangedListener {
 }
 
 @State(name = "CphTargetRunnerState", storages = [Storage("cph-target-runner.xml")])
-class CphStateService : PersistentStateComponent<CphState> {
+class CphStateService : PersistentStateComponentWithModificationTracker<CphState> {
     private var state = CphState()
+    private val modificationCounter = AtomicLong()
 
     override fun getState(): CphState = state
 
+    override fun getStateModificationCount(): Long = modificationCounter.get()
+
     override fun loadState(state: CphState) {
-        if (!state.cphEnabled && state.targets.isNotEmpty()) {
-            state.cphEnabled = true
-        }
         state.targets.values.forEach {
             it.timeoutMillis = it.timeoutMillis.coerceIn(CPH_MIN_TIMEOUT_MILLIS, CPH_MAX_TIMEOUT_MILLIS)
         }
@@ -126,17 +126,30 @@ class CphStateService : PersistentStateComponent<CphState> {
         this.state = state
     }
 
+    fun updateState(update: CphState.() -> Unit) {
+        state.update()
+        markModified()
+    }
+
+    fun markModified() {
+        modificationCounter.incrementAndGet()
+    }
+
     fun getOrCreateTargetCases(identity: CphTargetIdentity): CphTargetCases {
-        return state.targets.getOrPut(identity.id) {
-            CphTargetCases(
-                targetId = identity.id,
-                displayName = identity.displayName,
-                cases = mutableListOf(CphTestCase(name = "Case 1")),
-            )
-        }.also {
-            it.targetId = identity.id
-            it.displayName = identity.displayName
+        val existing = state.targets[identity.id]
+        val targetCases = existing ?: CphTargetCases(
+            targetId = identity.id,
+            displayName = identity.displayName,
+            cases = mutableListOf(CphTestCase(name = "Case 1")),
+        ).also {
+            state.targets[identity.id] = it
         }
+        if (existing == null || targetCases.targetId != identity.id || targetCases.displayName != identity.displayName) {
+            targetCases.targetId = identity.id
+            targetCases.displayName = identity.displayName
+            markModified()
+        }
+        return targetCases
     }
 
     companion object {

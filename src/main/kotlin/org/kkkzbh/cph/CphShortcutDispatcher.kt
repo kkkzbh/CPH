@@ -39,7 +39,7 @@ internal class CphShortcutDispatcher(private val project: Project) : Disposable 
             keyStroke = CphShortcutMatcher.keyStrokeFromEvent(event),
             state = CphShortcutSettings.getInstance().state,
             fromShortcutInput = false,
-            cphEnabled = CphStateService.getInstance(project).state.cphEnabled,
+            cphEnabled = CphProjectActivationService.getInstance(project).isEnabled(),
             codeforcesSubmitEnabled = CphCodeforcesSubmitFeature.isEnabled(),
         ) ?: return false
 
@@ -81,7 +81,7 @@ internal object CphShortcutExecutor {
             }
             return
         }
-        if (!CphStateService.getInstance(project).state.cphEnabled) return
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) return
 
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(CPH_TOOL_WINDOW_ID) ?: return
         val panel = findCreatedPanel(toolWindow)

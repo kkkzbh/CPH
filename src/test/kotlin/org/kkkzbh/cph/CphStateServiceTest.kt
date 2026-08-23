@@ -152,33 +152,31 @@ class CphStateServiceTest {
     }
 
     @Test
-    fun loadStateDefaultsCphDisabledForNewProject() {
+    fun updateStateIncrementsModificationCount() {
         val service = CphStateService()
-        service.loadState(CphState())
 
-        assertFalse(service.getState().cphEnabled)
+        service.updateState { singleFileModeEnabled = false }
+
+        assertFalse(service.getState().singleFileModeEnabled)
+        assertEquals(1L, service.stateModificationCount)
     }
 
     @Test
-    fun loadStatePreservesCphEnabled() {
+    fun creatingTargetCasesIncrementsModificationCount() {
         val service = CphStateService()
-        service.loadState(CphState(cphEnabled = true))
 
-        assertTrue(service.getState().cphEnabled)
-    }
-
-    @Test
-    fun loadStateTreatsExistingTargetDataAsEnabled() {
-        val service = CphStateService()
-        service.loadState(
-            CphState(
-                targets = linkedMapOf(
-                    "target" to CphTargetCases(targetId = "target", displayName = "Target"),
-                ),
+        service.getOrCreateTargetCases(
+            CphTargetIdentity(
+                id = "target",
+                displayName = "Target",
+                settings = null,
+                runnable = true,
+                message = "",
+                kind = CphTargetKind.CMAKE_APP,
             ),
         )
 
-        assertTrue(service.getState().cphEnabled)
+        assertEquals(1L, service.stateModificationCount)
     }
 
     @Test

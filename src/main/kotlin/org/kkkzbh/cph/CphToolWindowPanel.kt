@@ -217,6 +217,7 @@ internal object CphStatusMapper {
 
 class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val stateService = CphStateService.getInstance(project)
+    private val activationService = CphProjectActivationService.getInstance(project)
     private val themeAssetService = CphThemeAssetService.getInstance()
     private val theme: CphThemePalette
         get() = CphThemes.current()
@@ -416,7 +417,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         singleFileModeEnabled.addActionListener {
             if (!applyingTargetSettings) {
                 val enabled = singleFileModeEnabled.isSelected
-                stateService.getState().singleFileModeEnabled = enabled
+                stateService.updateState { singleFileModeEnabled = enabled }
                 refreshSubmitAvailability(singleFileModeEnabled = enabled)
                 CphSingleFileModeService.getInstance(project).syncForCurrentFile(force = true)
                 refreshRunActionButtons()
@@ -434,21 +435,22 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         })
         ignoreTrailingWhitespace.addActionListener {
             currentTargetCases.ignoreTrailingWhitespace = ignoreTrailingWhitespace.isSelected
+            stateService.markModified()
             refreshActualDiffHighlights()
         }
         outputSplitEnabled.addActionListener {
-            stateService.getState().ui.outputSplitEnabled = outputSplitEnabled.isSelected
+            stateService.updateState { ui.outputSplitEnabled = outputSplitEnabled.isSelected }
             rebuildOutputLayout()
         }
         showStderrEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().ui.showStderrEnabled = showStderrEnabled.isSelected
+                stateService.updateState { ui.showStderrEnabled = showStderrEnabled.isSelected }
                 rebuildOutputLayout()
             }
         }
         compactCaseTabsEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().ui.compactCaseTabsEnabled = compactCaseTabsEnabled.isSelected
+                stateService.updateState { ui.compactCaseTabsEnabled = compactCaseTabsEnabled.isSelected }
                 refreshTabs {
                     revealCaseTab(selectedCase?.id)
                 }
@@ -456,24 +458,24 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
         confidentSubmitEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().ui.confidentSubmitEnabled = confidentSubmitEnabled.isSelected
+                stateService.updateState { ui.confidentSubmitEnabled = confidentSubmitEnabled.isSelected }
             }
         }
         parallelCaseRunEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().ui.parallelCaseRunEnabled = parallelCaseRunEnabled.isSelected
+                stateService.updateState { ui.parallelCaseRunEnabled = parallelCaseRunEnabled.isSelected }
             }
         }
         gccBitsPchEnabled.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().compileSettings.gccBitsPchEnabled = gccBitsPchEnabled.isSelected
+                stateService.updateState { compileSettings.gccBitsPchEnabled = gccBitsPchEnabled.isSelected }
                 syncCompileSettingsForCurrentTarget(reportStatus = true)
             }
         }
         noExpectedModeEnabled.addActionListener {
             if (!applyingTargetSettings) {
                 flushSelectedCase()
-                stateService.getState().ui.noExpectedModeEnabled = noExpectedModeEnabled.isSelected
+                stateService.updateState { ui.noExpectedModeEnabled = noExpectedModeEnabled.isSelected }
                 rebuildOutputLayout()
                 refreshActualDiffHighlights()
                 refreshTabs()
@@ -487,8 +489,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
         cppStandardCombo.addActionListener {
             if (!applyingTargetSettings) {
-                stateService.getState().compileSettings.cppStandard = cppStandardCombo.selectedItem as? CphCppStandard
-                    ?: CphCppStandard.FOLLOW_TARGET
+                stateService.updateState {
+                    compileSettings.cppStandard = cppStandardCombo.selectedItem as? CphCppStandard
+                        ?: CphCppStandard.FOLLOW_TARGET
+                }
                 syncCompileSettingsForCurrentTarget(reportStatus = true)
             }
         }
@@ -499,13 +503,14 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
             private fun persist() {
                 if (!applyingTargetSettings) {
-                    stateService.getState().compileSettings.compileOptions = compileOptionsField.text
+                    stateService.updateState { compileSettings.compileOptions = compileOptionsField.text }
                     scheduleCompileSettingsSync()
                 }
             }
         })
         timeoutSpinner.addChangeListener {
             currentTargetCases.timeoutMillis = (timeoutSpinner.value as Number).toLong()
+            stateService.markModified()
         }
         listOf(runAllShortcutField, runSelectedCaseShortcutField, debugSelectedCaseShortcutField, submitShortcutField).forEach {
             it.onShortcutChanged = { persistShortcutSettings() }
@@ -593,12 +598,10 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         }
     }
 
-    private fun isCphEnabled(): Boolean = stateService.getState().cphEnabled
+    private fun isCphEnabled(): Boolean = activationService.isEnabled()
 
     private fun enableCphForProject() {
-        if (!isCphEnabled()) {
-            stateService.getState().cphEnabled = true
-        }
+        activationService.enable()
         CphSingleFileModeService.getInstance(project).start()
         refreshTarget()
         showActiveView()
@@ -2399,7 +2402,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun persistSingleFileWorkingDirectory() {
         if (applyingTargetSettings || applyingWorkingDirectorySettings) return
         val normalized = CphStateService.normalizeSingleFileWorkingDirectory(singleFileWorkingDirectoryField.text)
-        stateService.getState().singleFileWorkingDirectory = normalized
+        stateService.updateState { singleFileWorkingDirectory = normalized }
         if (singleFileWorkingDirectoryField.text != normalized) {
             SwingUtilities.invokeLater { setSingleFileWorkingDirectoryText(normalized) }
         }
@@ -2637,7 +2640,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     titleInlineAction = titleActionGroup(inputCopyButton),
                     titleAction = inputActions(),
                 ) {
-                    stateService.getState().ui.inputHeight = it
+                    stateService.updateState { ui.inputHeight = it }
                 },
                 BorderLayout.NORTH,
             )
@@ -2789,9 +2792,11 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun persistHorizontalOutputSplitRatio(splitPane: JSplitPane) {
         val span = splitPane.width - splitPane.dividerSize
         if (span <= 0) return
-        stateService.getState().ui.outputSplitRatio = CphStateService.clampOutputSplitRatio(
-            splitPane.dividerLocation.toDouble() / span.toDouble(),
-        )
+        stateService.updateState {
+            ui.outputSplitRatio = CphStateService.clampOutputSplitRatio(
+                splitPane.dividerLocation.toDouble() / span.toDouble(),
+            )
+        }
     }
 
     private fun labeledOutput(label: String, component: JComponent, titleInlineAction: JComponent? = null): JComponent {
@@ -3032,7 +3037,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun setEditorFontSize(size: Int, persist: Boolean) {
         val clamped = CphStateService.clampEditorFontSize(size)
         if (persist) {
-            stateService.getState().ui.editorFontSize = clamped
+            stateService.updateState { ui.editorFontSize = clamped }
         }
         if ((editorFontSizeSpinner.value as? Number)?.toInt() != clamped) {
             editorFontSizeSpinner.value = clamped
@@ -3070,6 +3075,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val text = actualArea.text
         expectedArea.text = text
         testCase.expectedOutput = text
+        stateService.markModified()
         refreshActualDiffHighlights()
         refreshTabs()
         showTitleActionFeedback(actualToExpectedButton, CphText.current().actualSetAsExpected)
@@ -3201,6 +3207,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val index = currentTargetCases.cases.size + 1
         val testCase = CphTestCase(name = "Case $index")
         currentTargetCases.cases.add(testCase)
+        stateService.markModified()
         refreshTabs()
         selectCase(testCase, reveal = false)
         updateActions()
@@ -3213,6 +3220,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         runtimeStates.clear()
         val testCase = CphTestCase(name = "Case 1")
         currentTargetCases.cases.add(testCase)
+        stateService.markModified()
         selectedCase = null
         refreshTabs()
         selectCase(testCase)
@@ -3224,6 +3232,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         val index = currentTargetCases.cases.indexOfFirst { it.id == testCase.id }
         val deletingSelected = selectedCase?.id == testCase.id
         currentTargetCases.cases.remove(testCase)
+        stateService.markModified()
         runtimeStates.remove(testCase.id)
         if (deletingSelected) {
             selectedCase = null
@@ -3384,6 +3393,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         message = "Save failed before running CPH samples: ${saveError.message ?: saveError.javaClass.simpleName}",
                     )
                     runCases.forEach { it.lastResult = result.copy() }
+                    stateService.markModified()
                     runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
@@ -3400,6 +3410,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                         message = "Failed to sync CPH compile settings: $syncError",
                     )
                     runCases.forEach { it.lastResult = result.copy() }
+                    stateService.markModified()
                     runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
@@ -3409,6 +3420,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                 val preparedTarget = when (preparation) {
                     is CphRunPreparation.Failed -> {
                         runCases.forEach { it.lastResult = preparation.result.copy() }
+                        stateService.markModified()
                         runCases.forEach { reportCaseError(it, it.lastResult) }
                         return
                     }
@@ -3446,6 +3458,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     indicator.text = CphText.current().completedSamples(completion.completedCases, completion.totalCases)
                     indicator.fraction = completion.completedCases.toDouble() / completion.totalCases
                     completion.testCase.lastResult = completion.result
+                    stateService.markModified()
                     ApplicationManager.getApplication().invokeLater {
                         reportCaseError(completion.testCase, completion.result)
                         runtimeStates.remove(completion.testCase.id)
@@ -3614,10 +3627,13 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun flushSelectedCase() {
         val testCase = selectedCase ?: return
+        var changed = testCase.input != inputArea.text
         testCase.input = inputArea.text
         if (!stateService.getState().ui.noExpectedModeEnabled) {
+            changed = changed || testCase.expectedOutput != expectedArea.text
             testCase.expectedOutput = expectedArea.text
         }
+        if (changed) stateService.markModified()
         refreshTabs()
     }
 

@@ -19,6 +19,7 @@ import org.kkkzbh.cph.CPH_MIN_TIMEOUT_MILLIS
 import org.kkkzbh.cph.CphCasesChangedListener
 import org.kkkzbh.cph.CphCompileSettingsSynchronizer
 import org.kkkzbh.cph.CphStateService
+import org.kkkzbh.cph.CphProjectActivationService
 import org.kkkzbh.cph.CphTargetCases
 import org.kkkzbh.cph.CphTargetResolver
 import org.kkkzbh.cph.CphTestCase
@@ -57,7 +58,7 @@ internal class CphProblemImporter(private val project: Project) {
 
     private fun doImport(payload: CompetitiveCompanionPayload): CphImportOutcome {
         val stateService = CphStateService.getInstance(project)
-        if (!stateService.getState().cphEnabled) {
+        if (!CphProjectActivationService.getInstance(project).isEnabled()) {
             return CphImportOutcome(success = false, message = "CPH is not enabled for this project.")
         }
         val settings = CphImportSettings.getInstance().state
@@ -87,6 +88,7 @@ internal class CphProblemImporter(private val project: Project) {
             val identity = CphTargetResolver.fromSettings(result.settings)
             val targetCases = stateService.getOrCreateTargetCases(identity)
             applyCases(targetCases, payload)
+            stateService.markModified()
             RunManager.getInstance(project).selectedConfiguration = result.settings
             project.messageBus.syncPublisher(CphCasesChangedListener.TOPIC).targetCasesChanged(identity.id)
             result
