@@ -590,7 +590,7 @@ internal class CphRunner(
         } catch (e: Throwable) {
             val cause = invocationCause(e)
             if (isCppFileTargetMiss(cause)) {
-                val diagnostics = CphCompileSettingsSynchronizer(project).diagnoseCppFileWorkspace(settings)
+                val diagnostics = CphCompileSettingsSynchronizer.getInstance(project).diagnoseCppFileWorkspace(settings)
                 return CphCppFileBuildResult(
                     error = CphCaseResult(
                         verdict = CphVerdict.ERROR,
@@ -685,7 +685,7 @@ internal class CphRunner(
                     e.executable.absolutePath,
             )
             cleanupCppFileExecutableArtifacts(e.executable)
-            val refresh = CphCompileSettingsSynchronizer(project).refreshCppFileWorkspace(settings, waitForTarget = true)
+            val refresh = CphCompileSettingsSynchronizer.getInstance(project).refreshCppFileWorkspace(settings, waitForTarget = true)
             if (refresh.error != null) {
                 log.warn("CPH C/C++ File target refresh failed before retry for '${settings.name}': ${refresh.error}")
             }

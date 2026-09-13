@@ -6,23 +6,32 @@ import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.components.ComponentManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.jetbrains.cidr.cpp.runfile.CppFileBuildTargetsService
 import com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration
+import kotlinx.coroutines.runBlocking
+import kotlin.coroutines.suspendCoroutine
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.resume
+import kotlin.coroutines.Continuation
 import java.io.File
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 internal data class CphCompileSyncResult(
     val changed: Boolean = false,
     val error: String? = null,
     val syncMillis: Long = 0L,
     val managedArgsMillis: Long = 0L,
-    val pchStatus: CphPchStatus = CphPchStatus.OFF,
-    val pchMessage: String = "",
+    val stdlibStatus: CphStdlibStatus = CphStdlibStatus.OFF,
+    val stdlibMessage: String = "",
 )
 
 internal data class CphCppFileCompilerOptionsUpdate(
@@ -30,7 +39,7 @@ internal data class CphCppFileCompilerOptionsUpdate(
     val changed: Boolean,
 )
 
-private fun CphGccPchResult.withAddedElapsedMillis(additionalMillis: Long): CphGccPchResult =
+private fun CphGccStdlibResult.withAddedElapsedMillis(additionalMillis: Long): CphGccStdlibResult =
     copy(elapsedMillis = elapsedMillis + additionalMillis)
 
 internal object CphCppFileCompilerOptionsSync {
@@ -57,75 +66,27 @@ internal object CphCppFileCompilerOptionsSync {
             changed = next != current,
         )
     }
-
-    fun withoutManagedGccAccelArgs(compilerOptions: String): String {
-        val args = CphCompileOptions.parseShellLike(compilerOptions)
-        val hasManagedStdModuleMapper = args.withIndex().any { (index, arg) ->
-            isManagedStdModuleMapperArg(arg) ||
-                (arg == "-fmodule-mapper" && args.getOrNull(index + 1)?.let(::isManagedStdModuleMapperValue) == true)
-        }
-        val filtered = mutableListOf<String>()
-        var index = 0
-        while (index < args.size) {
-            val arg = args[index]
-            if (arg == "-I" && index + 1 < args.size && isManagedPchPath(args[index + 1])) {
-                index += 2
-                continue
-            }
-            if (arg.startsWith("-I") && isManagedPchPath(arg.removePrefix("-I"))) {
-                index += 1
-                continue
-            }
-            if (arg == "-fmodules" && hasManagedStdModuleMapper) {
-                index += 1
-                continue
-            }
-            if (arg == "-fmodule-mapper" && index + 1 < args.size && isManagedStdModuleMapperValue(args[index + 1])) {
-                index += 2
-                continue
-            }
-            if (isManagedStdModuleMapperArg(arg)) {
-                index += 1
-                continue
-            }
-            filtered.add(arg)
-            index += 1
-        }
-        return CphCompileOptions.renderCompilerOptions(filtered)
-    }
-
-    private fun isManagedPchPath(path: String): Boolean {
-        val normalized = path.replace('\\', '/')
-        return normalized.contains("/cph-target-runner/pch/") ||
-            normalized.contains("cph-target-runnerpch")
-    }
-
-    private fun isManagedStdModuleMapperArg(arg: String): Boolean =
-        arg.startsWith("-fmodule-mapper=") && isManagedStdModuleMapperValue(arg.substringAfter('='))
-
-    private fun isManagedStdModuleMapperValue(value: String): Boolean {
-        val normalized = value.replace('\\', '/')
-        return normalized.contains("cph-target-runner/std-modules/")
-    }
 }
 
 internal class CphCompileSettingsSynchronizer(private val project: Project) {
-    fun sync(
-        identity: CphTargetIdentity,
-        targetCases: CphTargetCases,
-        compileSettings: CphCompileSettings,
-        waitForCppFileTarget: Boolean = false,
-    ): CphCompileSyncResult {
+    private val preparationLock = ReentrantLock()
+
+    fun sync(identity: CphTargetIdentity): CphCompileSyncResult = preparationLock.withLock {
+        val compileSettings = CphStateService.getInstance(project).state.compileSettings.toCompileSettings()
         val startedAt = System.nanoTime()
         val settings = identity.settings ?: return CphCompileSyncResult()
         return try {
             val result = when (identity.kind) {
-                CphTargetKind.CPP_FILE -> syncCppFile(settings, targetCases, compileSettings, waitForCppFileTarget)
+                CphTargetKind.CPP_FILE -> prepareCppFile(settings.configuration as CppFileRunConfiguration)
                 CphTargetKind.CMAKE_APP -> syncCMake(settings, compileSettings)
                 CphTargetKind.UNSUPPORTED -> CphCompileSyncResult()
             }
             result.copy(syncMillis = elapsedMillis(startedAt))
-        } catch (e: Throwable) {
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             CphCompileSyncResult(
                 error = e.message ?: e.javaClass.simpleName,
                 syncMillis = elapsedMillis(startedAt),
@@ -155,124 +116,62 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
                 waitForCppFileWorkspace(settings)
             }
             CphCompileSyncResult()
-        } catch (e: Throwable) {
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             CphCompileSyncResult(error = e.message ?: e.javaClass.simpleName)
         }
     }
 
-    private fun syncCppFile(
-        settings: RunnerAndConfigurationSettings,
-        @Suppress("UNUSED_PARAMETER") targetCases: CphTargetCases,
-        compileSettings: CphCompileSettings,
-        waitForTarget: Boolean,
-    ): CphCompileSyncResult {
-        val access = cppFileCompilerOptionsAccess(settings)
-        val current = access.get()
-        val baseCurrent = if (waitForTarget && compileSettings.gccBitsPchEnabled) {
-            CphCppFileCompilerOptionsSync.withoutManagedGccAccelArgs(current)
-        } else {
-            current
+    fun prepareCppFile(
+        configuration: CppFileRunConfiguration,
+    ): CphCompileSyncResult = preparationLock.withLock {
+        ApplicationManager.getApplication().assertIsNonDispatchThread()
+        val source = configuration.options.sourceFile?.let(::File)
+            ?: throw ExecutionException("The C/C++ File configuration has no source file.")
+        if (!CphCppFileCompilerResolver.isCppSource(source.name)) return@withLock CphCompileSyncResult()
+        val compileSettings = CphStateService.getInstance(project).state.compileSettings.toCompileSettings()
+        if (project.getService(CppFileBuildTargetsService::class.java).getTargetOrNullFor(configuration) == null) {
+            runOnEdt { refreshCppFileTarget(configuration) }
         }
-        val baseUpdate = CphCppFileCompilerOptionsSync.compute(
-            current = baseCurrent,
-            settings = compileSettings,
-        )
-        var changed = false
-        if (baseUpdate.changed) {
-            runOnEdt {
-                access.set(baseUpdate.compilerOptions)
-                refreshCppFileTarget(settings)
-            }
-            changed = true
-        } else if (waitForTarget && !hasCppFileBuildTarget(settings)) {
-            runOnEdt {
-                refreshCppFileTarget(settings)
-            }
-        }
-
-        if (!waitForTarget) {
-            return CphCompileSyncResult(
-                changed = changed,
-                pchStatus = if (compileSettings.gccBitsPchEnabled) CphPchStatus.SKIPPED else CphPchStatus.OFF,
-                pchMessage = if (compileSettings.gccBitsPchEnabled) "bits accel: deferred" else "",
-            )
-        }
-
-        val targetReady = waitForCppFileWorkspaceOrFalse(settings)
-        if (!compileSettings.gccBitsPchEnabled) {
-            return CphCompileSyncResult(changed = changed, pchStatus = CphPchStatus.OFF)
-        }
-        if (!targetReady) {
-            return CphCompileSyncResult(
-                changed = changed,
-                pchStatus = CphPchStatus.SKIPPED,
-                pchMessage = "no CLion build target",
-            )
-        }
-
-        val configuration = settings.configuration as? CppFileRunConfiguration
-            ?: return CphCompileSyncResult(
-                changed = changed,
-                pchStatus = CphPchStatus.SKIPPED,
-                pchMessage = "not cpp file",
-            )
-        val sourceFile = configuration.options.sourceFile
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
-        if (sourceFile == null || !sourceFile.isFile) {
-            return CphCompileSyncResult(
-                changed = changed,
-                pchStatus = CphPchStatus.SKIPPED,
-                pchMessage = "no source",
-            )
-        }
-        val sourceUsage = CphGccPchService.sourceFileStdAccelerationUsage(sourceFile)
-        if (!sourceUsage.usesBitsHeader && !sourceUsage.usesImportStd) {
-            return CphCompileSyncResult(
-                changed = changed,
-                pchStatus = CphPchStatus.SKIPPED,
-                pchMessage = "skipped(no bits include/import std)",
-            )
-        }
+        waitForCppFileBuildTarget(configuration)
         val compiler = CphCppFileCompilerResolver(project).resolve(configuration)
-        val accel = when (compiler) {
-            is CphCppFileCompilerResolution.Ready -> CphGccPchService.getInstance(project).compilerArgs(
+        val stdlib = when (compiler) {
+            is CphCppFileCompilerResolution.Ready -> CphGccStdlibService.getInstance(project).compilerArgs(
                 compiler = compiler,
                 compileSettings = compileSettings,
             ).withAddedElapsedMillis(compiler.elapsedMillis)
-            is CphCppFileCompilerResolution.Skipped -> CphGccPchResult(
-                status = CphPchStatus.SKIPPED,
+            is CphCppFileCompilerResolution.Skipped -> CphGccStdlibResult(
+                status = CphStdlibStatus.SKIPPED,
                 elapsedMillis = compiler.elapsedMillis,
                 summary = compiler.summary,
             )
         }
-        if (accel.status == CphPchStatus.FAILED) {
-            return CphCompileSyncResult(
-                changed = changed,
-                error = accel.summary,
-                managedArgsMillis = accel.elapsedMillis,
-                pchStatus = accel.status,
-                pchMessage = accel.summary,
-            )
+        if (stdlib.status == CphStdlibStatus.FAILED) {
+            throw ExecutionException(stdlib.summary)
         }
-        val fullUpdate = CphCppFileCompilerOptionsSync.compute(
-            current = access.get(),
+        val update = CphCppFileCompilerOptionsSync.compute(
+            current = configuration.options.compilerOptions.orEmpty(),
             settings = compileSettings,
-            managedArgs = accel.args,
+            managedArgs = stdlib.args,
         )
-        if (fullUpdate.changed) {
+        if (update.changed) {
             runOnEdt {
-                access.set(fullUpdate.compilerOptions)
-                refreshCppFileTarget(settings)
+                configuration.options.compilerOptions = update.compilerOptions
+                refreshCppFileTarget(configuration)
             }
-            changed = true
-            waitForCppFileWorkspaceOrFalse(settings)
+            waitForCppFileBuildTarget(configuration)
         }
-        return CphCompileSyncResult(
-            changed = changed,
-            managedArgsMillis = accel.elapsedMillis,
-            pchStatus = accel.status,
-            pchMessage = accel.summary,
+        awaitCppFileWorkspaceProcessing(configuration)
+        project.service<CphStdlibWorkspaceService>().update(source, stdlib.moduleSources)
+        project.service<CphStdlibCodeInsightService>().update(source, stdlib.moduleSources)
+        CphCompileSyncResult(
+            changed = update.changed,
+            managedArgsMillis = stdlib.elapsedMillis,
+            stdlibStatus = stdlib.status,
+            stdlibMessage = stdlib.summary,
         )
     }
 
@@ -281,33 +180,28 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         waitForCppFileBuildTarget(configuration)
     }
 
-    private fun waitForCppFileWorkspaceOrFalse(settings: RunnerAndConfigurationSettings): Boolean {
-        return runCatching {
-            waitForCppFileWorkspace(settings)
-            true
-        }.getOrDefault(false)
-    }
-
-    private fun hasCppFileBuildTarget(settings: RunnerAndConfigurationSettings): Boolean {
-        val configuration = settings.configuration as? CppFileRunConfiguration ?: return true
-        val targetsService = project.getService(CppFileBuildTargetsService::class.java) ?: return false
-        return targetsService.getTargetOrNullFor(configuration) != null
-    }
-
     private fun refreshCppFileTarget(settings: RunnerAndConfigurationSettings) {
         val configuration = settings.configuration as? CppFileRunConfiguration ?: return
-        val data = configuration.generateBuildTargetAndConfigurationData()
-        configuration.setTargetAndConfigurationData(data)
-        runCatching {
-            val processor = projectService(CPP_FILE_WORKSPACE_PROCESSOR_CLASS, configuration.javaClass.classLoader)
-                ?: return@runCatching
-            val currentData = configuration.createConfigurationData()
-            processor.javaClass.methods.firstOrNull {
-                it.name == "addConfigurations" &&
-                    it.parameterCount == 2 &&
-                    it.parameterTypes[0].isAssignableFrom(List::class.java) &&
-                    it.parameterTypes[1] == Boolean::class.javaPrimitiveType
-            }?.invoke(processor, listOf(currentData), true)
+        refreshCppFileTarget(configuration)
+    }
+
+    private fun refreshCppFileTarget(configuration: CppFileRunConfiguration) {
+        configuration.setTargetAndConfigurationData(configuration.generateBuildTargetAndConfigurationData())
+        val processorClass = Class.forName(
+            "com.jetbrains.cidr.cpp.runfile.CppFileWorkspaceProcessor", true, configuration.javaClass.classLoader,
+        )
+        val processor = project.getService(processorClass)
+        processorClass.getMethod("addConfigurations", List::class.java, Boolean::class.javaPrimitiveType)
+            .invoke(processor, listOf(configuration.createConfigurationData()), true)
+    }
+
+    private fun awaitCppFileWorkspaceProcessing(configuration: CppFileRunConfiguration) = runBlocking {
+        val type = Class.forName("com.jetbrains.cidr.cpp.runfile.CppFileWorkspaceProcessor", true,
+            configuration.javaClass.classLoader)
+        val processor = project.getService(type)
+        suspendCoroutine<Unit> { continuation ->
+            val result = type.getMethod("awaitProcessing", Continuation::class.java).invoke(processor, continuation)
+            if (result !== COROUTINE_SUSPENDED) continuation.resume(Unit)
         }
     }
 
@@ -368,16 +262,6 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
                 it.name == "scheduleReload" && it.parameterCount == 0
             }?.invoke(workspace)
         }
-    }
-
-    private fun cppFileCompilerOptionsAccess(settings: RunnerAndConfigurationSettings): CompilerOptionsAccess {
-        val configuration = settings.configuration as? CppFileRunConfiguration
-            ?: throw ExecutionException("'${settings.name}' is not a CLion C/C++ File configuration.")
-        val options = configuration.options
-        return CompilerOptionsAccess(
-            get = { options.compilerOptions.orEmpty() },
-            set = { options.compilerOptions = it },
-        )
     }
 
     private fun resolveCMakeTargetName(settings: RunnerAndConfigurationSettings): String? {
@@ -482,13 +366,6 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
         return "Current data: $currentData. Known targets: [$targets]."
     }
 
-    private fun projectService(className: String, classLoader: ClassLoader): Any? {
-        return runCatching {
-            val serviceClass = Class.forName(className, true, classLoader)
-            (project as ComponentManager).getService(serviceClass)
-        }.getOrNull()
-    }
-
     private fun <T> runOnEdt(action: () -> T): T {
         val application = ApplicationManager.getApplication()
         if (application.isDispatchThread) return action()
@@ -505,13 +382,9 @@ internal class CphCompileSettingsSynchronizer(private val project: Project) {
     private fun elapsedMillis(startedAt: Long): Long =
         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
 
-    private data class CompilerOptionsAccess(
-        val get: () -> String,
-        val set: (String) -> Unit,
-    )
+    companion object {
+        fun getInstance(project: Project): CphCompileSettingsSynchronizer = project.service()
 
-    private companion object {
-        private const val CPP_FILE_WORKSPACE_PROCESSOR_CLASS = "com.jetbrains.cidr.cpp.runfile.CppFileWorkspaceProcessor"
         private const val CPP_FILE_TARGET_WAIT_ATTEMPTS = 100
         private const val CPP_FILE_TARGET_WAIT_INTERVAL_MILLIS = 100L
     }

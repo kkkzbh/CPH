@@ -94,7 +94,7 @@ internal class CphProblemImporter(private val project: Project) {
             result
         }
 
-        val refresh = CphCompileSettingsSynchronizer(project)
+        val refresh = CphCompileSettingsSynchronizer.getInstance(project)
             .refreshCppFileWorkspace(creation.settings, waitForTarget = true)
         if (refresh.error != null) {
             logger.warn("CPH refresh failed: ${refresh.error}")

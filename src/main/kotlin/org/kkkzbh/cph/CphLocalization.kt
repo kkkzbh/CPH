@@ -66,15 +66,13 @@ internal class CphUiTexts(private val language: CphUiLanguage) {
     val gccBitsPch = if (zh) "加速万能头编译" else "Accelerate bits/stdc++.h compilation"
     val gccBitsPchTooltip = if (zh) {
         """
-        仅限GCC编译器使用
-        GCC16及以上利用GCM为<bits/stdc++.h>加速，且代码可以使用import std
-        GCC15及以下利用PCH对<bits/stdc++.h>加速
+        单文件 GCC 编译：可选的 <bits/stdc++.h> 加速
+        GCC 16+、C++20+ 使用 GCM，其他 GCC 标准使用 PCH
         """.trimIndent()
     } else {
         """
-        GCC only.
-        GCC 16+ uses GCM to accelerate <bits/stdc++.h>, and code may use import std.
-        GCC 15 and below use PCH to accelerate <bits/stdc++.h>.
+        Optional <bits/stdc++.h> acceleration for single-file GCC builds.
+        GCC 16+ with C++20+ uses GCM; other GCC modes use PCH.
         """.trimIndent()
     }
     val workingDirectory = if (zh) "工作目录配置:" else "Working directory:"

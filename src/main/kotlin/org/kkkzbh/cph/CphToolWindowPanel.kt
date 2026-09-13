@@ -236,7 +236,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
     private var activeRunButton: ActiveRunButton? = null
     private var runSpinnerIndex = 0
 
-    private val compileSettingsSynchronizer = CphCompileSettingsSynchronizer(project)
+    private val compileSettingsSynchronizer = CphCompileSettingsSynchronizer.getInstance(project)
     private val runtimeStates = linkedMapOf<String, RuntimeTabState>()
     private val caseTabComponents = linkedMapOf<String, CaseTab>()
 
@@ -3277,12 +3277,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         object : Task.Backgroundable(project, CphText.current().preparingDebugTask(), false) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = CphText.current().preparingCase(testCase.name)
-                val syncResult = compileSettingsSynchronizer.sync(
-                    identity,
-                    targetCases,
-                    stateService.getState().compileSettings.toCompileSettings(),
-                    waitForCppFileTarget = true,
-                )
+                val syncResult = compileSettingsSynchronizer.sync(identity)
                 val syncError = syncResult.error
                 val preparation = if (syncError == null) {
                     CphRunner(project).prepareForRun(identity)
@@ -3345,21 +3340,21 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
         prepareDiagnostics: CphRunPrepareDiagnostics,
     ): String {
         val totalMillis = syncResult.syncMillis + prepareDiagnostics.totalPrepareMillis
-        val pch = pchDiagnosticText(syncResult)
+        val stdlib = stdlibDiagnosticText(syncResult)
         val build = if (prepareDiagnostics.buildSkippedByCphCache) {
             "skipped"
         } else {
             CphUiText.formatDuration(prepareDiagnostics.buildMillis)
         }
         val cache = if (prepareDiagnostics.buildSkippedByCphCache) "hit" else "miss"
-        return "$prefix ${CphUiText.formatDuration(totalMillis)} | bits accel: $pch | " +
+        return "$prefix ${CphUiText.formatDuration(totalMillis)} | stdlib: $stdlib | " +
             "加速准备 ${CphUiText.formatDuration(syncResult.managedArgsMillis)} | " +
             "CLion构建 $build | CPH缓存 $cache"
     }
 
-    private fun pchDiagnosticText(syncResult: CphCompileSyncResult): String {
-        val status = syncResult.pchStatus.name.lowercase()
-        val message = syncResult.pchMessage.takeIf { it.isNotBlank() }
+    private fun stdlibDiagnosticText(syncResult: CphCompileSyncResult): String {
+        val status = syncResult.stdlibStatus.name.lowercase()
+        val message = syncResult.stdlibMessage.takeIf { it.isNotBlank() }
         return if (message == null) status else "$status($message)"
     }
 
@@ -3397,12 +3392,7 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
                     runCases.forEach { reportCaseError(it, it.lastResult) }
                     return
                 }
-                val syncResult = compileSettingsSynchronizer.sync(
-                    identity,
-                    targetCases,
-                    stateService.getState().compileSettings.toCompileSettings(),
-                    waitForCppFileTarget = true,
-                )
+                val syncResult = compileSettingsSynchronizer.sync(identity)
                 val syncError = syncResult.error
                 if (syncError != null) {
                     val result = CphCaseResult(
@@ -3530,22 +3520,22 @@ class CphToolWindowPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun syncCompileSettingsForCurrentTarget(reportStatus: Boolean) {
         if (applyingTargetSettings || running) return
-        val result = compileSettingsSynchronizer.sync(
-            currentIdentity,
-            currentTargetCases,
-            stateService.getState().compileSettings.toCompileSettings(),
-        )
-        val error = result.error ?: return
-        if (reportStatus) {
-            val statusMessage = "CPH compile settings sync failed: $error"
-            val report = CphErrorReportBuilder.generic(project, currentIdentity, statusMessage, error)
-            StatusBar.Info.set(statusMessage, project)
-            NotificationGroupManager.getInstance()
-                .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
-                .createNotification(CphText.current().cphErrorTitle, statusMessage, NotificationType.ERROR)
-                .addCphErrorActions(report)
-                .notify(project)
-        }
+        val identity = currentIdentity
+        object : Task.Backgroundable(project, "Prepare C++ compilation", true) {
+            override fun run(indicator: ProgressIndicator) {
+                val result = compileSettingsSynchronizer.sync(identity)
+                val error = result.error ?: return
+                if (reportStatus) {
+                    val statusMessage = "CPH compile settings sync failed: $error"
+                    val report = CphErrorReportBuilder.generic(project, identity, statusMessage, error)
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup(CPH_NOTIFICATION_GROUP_ID)
+                        .createNotification(CphText.current().cphErrorTitle, statusMessage, NotificationType.ERROR)
+                        .addCphErrorActions(report)
+                        .notify(project)
+                }
+            }
+        }.queue()
     }
 
     private fun reportDebugError(message: String) {

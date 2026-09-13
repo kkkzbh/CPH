@@ -1,6 +1,7 @@
 package org.kkkzbh.cph
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.registry.Registry
 import com.jetbrains.cidr.cpp.runfile.CppFileBuildTargetsService
 import com.jetbrains.cidr.cpp.runfile.CppFileRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
@@ -54,21 +55,25 @@ internal class CphCppFileCompilerResolver(private val project: Project) {
             false,
             null,
         ) ?: return skipped("no CLion environment")
-        val toolchain = runCatching {
-            CPPToolchains.getInstance().getToolchainByNameOrDefault(configuration.options.toolchainName)
-        }.getOrNull()
-        val languageKind = OCFileTypeHelpers.getLanguageKind(sourceFile.name) ?: CLanguageKind.CPP
-        val compilerPath = runCatching {
-            compilerCommandPath(buildConfiguration.resolveCompiler(project, environment, languageKind).first)
-        }.getOrElse {
-            return skipped(it.message ?: it.javaClass.simpleName)
-        }
+        val toolchain = environment.toolchain
+        val registryCompiler = Registry.get("clion.runFile.fallback.compiler.override")
+        val compilerPath = selectCompiler(
+            configuredCompiler = configuration.options.compilerFile,
+            registryCompiler = if (registryCompiler.isChangedFromDefault()) registryCompiler.asString() else null,
+            toolchainCompiler = toolchain.customCXXCompilerPath,
+            platform = when {
+                environment.isMSVC -> CphCppCompilerPlatform.MSVC
+                environment.isMinGW -> CphCppCompilerPlatform.MINGW
+                environment.isCygwin -> CphCppCompilerPlatform.CYGWIN
+                else -> CphCppCompilerPlatform.UNIX
+            },
+        )
         return CphCppFileCompilerResolution.Ready(
             compilerPath = compilerPath,
             sourceFile = sourceFile,
             environment = environment,
-            toolchainName = toolchain?.name ?: configuration.options.toolchainName.orEmpty(),
-            toolchainEnvironment = toolchain?.environment.orEmpty(),
+            toolchainName = toolchain.name,
+            toolchainEnvironment = toolchain.environment.orEmpty(),
             summary = "CLion $compilerPath",
             elapsedMillis = elapsedMillis(startedAt),
         )
@@ -78,7 +83,25 @@ internal class CphCppFileCompilerResolver(private val project: Project) {
         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
 
     companion object {
-        fun compilerCommandPath(path: java.nio.file.Path): String =
-            if (path.isAbsolute) path.toFile().absolutePath else path.toString()
+        fun selectCompiler(
+            configuredCompiler: String?,
+            registryCompiler: String?,
+            toolchainCompiler: String?,
+            platform: CphCppCompilerPlatform,
+        ): String = configuredCompiler ?: registryCompiler ?: toolchainCompiler ?: when (platform) {
+            CphCppCompilerPlatform.MSVC -> "cl.exe"
+            CphCppCompilerPlatform.MINGW -> "g++.exe"
+            CphCppCompilerPlatform.CYGWIN -> "c++.exe"
+            CphCppCompilerPlatform.UNIX -> "c++"
+        }
+
+        fun isCppSource(fileName: String): Boolean = OCFileTypeHelpers.getLanguageKind(fileName) == CLanguageKind.CPP
     }
+}
+
+internal enum class CphCppCompilerPlatform {
+    MSVC,
+    MINGW,
+    CYGWIN,
+    UNIX,
 }

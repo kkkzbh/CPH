@@ -7,7 +7,7 @@ import java.security.MessageDigest
 plugins {
     id("java")
     kotlin("jvm") version "2.3.0"
-    id("org.jetbrains.intellij.platform") version "2.13.1"
+    id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -134,6 +134,8 @@ dependencies {
             clion(platformVersion.get())
         }
         bundledPlugin("com.intellij.clion")
+        bundledPlugin("com.intellij.cidr.lang.clangd")
+        bundledModule("intellij.cidr.clangd.core")
         bundledModule("intellij.clion.runFile")
         testFramework(TestFrameworkType.Platform)
     }

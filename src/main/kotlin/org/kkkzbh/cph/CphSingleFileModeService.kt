@@ -51,6 +51,7 @@ internal class CphSingleFileModeService(private val project: Project) {
     fun start() {
         if (started) return
         started = true
+        CphCppFilePreparationService.getInstance(project).start()
         project.messageBus.connect(project).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
             override fun selectionChanged(event: FileEditorManagerEvent) {
                 syncForFile(event.newFile)
@@ -87,7 +88,7 @@ internal class CphSingleFileModeService(private val project: Project) {
             val settings = CphCppFileRunConfigurationFactory
                 .findOrCreate(project, file ?: return, request.displayName, request.workingDirectory)
                 .settings
-            val refresh = CphCompileSettingsSynchronizer(project).refreshCppFileWorkspace(settings, waitForTarget = false)
+            val refresh = CphCompileSettingsSynchronizer.getInstance(project).refreshCppFileWorkspace(settings, waitForTarget = false)
             if (refresh.error != null) {
                 StatusBar.Info.set("CPH single-file target refresh failed: ${refresh.error}", project)
             }

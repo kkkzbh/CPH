@@ -35,6 +35,12 @@ CPH Target Runner 是一个面向 CLion 的 C++ 竞赛刷题插件。它把样�
 
 常用配置都在 `Settings / Tools / CPH Target Runner` 中，包括工作目录、C++ 标准、编译选项、输出比较方式和快捷键。
 
+## 标准库模块与万能头加速
+
+单文件 GCC 编译会根据实际编译器和语言标准自动配置标准库模块：GCC 16 及以上、C++20 及以上且安装了 libstdc++ 模块源文件时，可直接使用 `import std;` 或 `import std.compat;`，CPH 样例运行与 CLion 原生运行／调试均会在构建前准备模块。首次准备会生成缓存，后续相同配置复用。CPH 同步 `import std` 的编辑器解析配置，并在编译配置变化时刷新标准库分析缓存。
+
+“加速万能头编译”用于 `<bits/stdc++.h>` 加速。启用时，GCC 16/C++20 及以上使用 GCM，其他 GCC 模式使用 PCH。切换编译器、标准、编译选项或加速开关时，CPH 会同步对应的完整编译参数。
+
 ## 导入题目
 
 CPH 内置 Competitive Companion 接收服务，默认监听 `127.0.0.1:10043`。安装 Competitive Companion 后，在题面点击浏览器扩展按钮，插件会自动创建源码文件、创建单文件运行配置、填入样例并打开文件。

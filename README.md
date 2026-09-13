@@ -35,6 +35,12 @@ If you mainly use CLion for contest problems, pure single-file mode is recommend
 
 Common options are under `Settings / Tools / CPH Target Runner`, including working directory, C++ standard, compiler options, output comparison mode, and shortcuts.
 
+## Standard library modules and header acceleration
+
+Single-file GCC builds automatically prepare standard library modules when GCC 16 or newer, C++20 or newer, and the libstdc++ module sources are available. Use `import std;` or `import std.compat;` directly in CPH sample runs and native CLion Run/Debug configurations. The first preparation creates a cache that subsequent builds with the same configuration reuse. CPH synchronizes editor analysis for `import std` and invalidates its analysis cache when the compilation configuration changes.
+
+“Accelerate bits/stdc++.h compilation” enables `<bits/stdc++.h>` acceleration. It uses GCM with GCC 16+/C++20+ and PCH in other GCC modes. Compiler, language standard, compiler option, and acceleration changes update the complete compiler arguments together.
+
 ## Import Problems
 
 CPH includes a Competitive Companion receiver, listening on `127.0.0.1:10043` by default. After installing Competitive Companion, click the browser extension button on a problem page; the plugin creates the source file, creates a single-file run configuration, fills in samples, and opens the file.
