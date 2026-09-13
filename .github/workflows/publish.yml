@@ -226,6 +226,21 @@ jobs:
             ./gradlew --stacktrace test packageBrowserExtension
           fi
 
+      - name: Verify published plugin APIs
+        if: steps.target.outputs.publish_stable == 'true' || steps.target.outputs.publish_eap == 'true'
+        shell: bash
+        env:
+          PUBLISH_STABLE: ${{ steps.target.outputs.publish_stable }}
+          PUBLISH_EAP: ${{ steps.target.outputs.publish_eap }}
+        run: |
+          set -euo pipefail
+          if [[ "${PUBLISH_STABLE}" == "true" ]]; then
+            ./gradlew --stacktrace verifyPlugin -PcphVariant=stable
+          fi
+          if [[ "${PUBLISH_EAP}" == "true" ]]; then
+            ./gradlew --stacktrace verifyPlugin -PcphVariant=eap
+          fi
+
       - name: Collect release assets
         shell: bash
         env:

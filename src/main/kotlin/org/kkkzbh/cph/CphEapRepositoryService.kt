@@ -1,6 +1,5 @@
 package org.kkkzbh.cph
 
-import com.intellij.ide.plugins.CustomPluginRepositoryService
 import com.intellij.openapi.updateSettings.impl.UpdateSettings
 
 internal object CphEapRepositoryService {
@@ -17,7 +16,7 @@ internal object CphEapRepositoryService {
             hosts.clear()
             hosts.addAll(updatedHosts)
         }
-        markPluginsCheckNeeded(updateSettings)
+        updateSettings.isPluginsCheckNeeded = true
     }
 
     fun disableEapRepository() {
@@ -27,7 +26,7 @@ internal object CphEapRepositoryService {
         if (hosts != updatedHosts) {
             hosts.clear()
             hosts.addAll(updatedHosts)
-            markPluginsCheckNeeded(updateSettings)
+            updateSettings.isPluginsCheckNeeded = true
         }
     }
 
@@ -54,8 +53,4 @@ internal object CphEapRepositoryService {
     private fun settings(): UpdateSettings =
         UpdateSettings.getInstance()
 
-    private fun markPluginsCheckNeeded(updateSettings: UpdateSettings) {
-        updateSettings.isPluginsCheckNeeded = true
-        CustomPluginRepositoryService.getInstance().clearCache()
-    }
 }
