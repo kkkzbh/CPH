@@ -242,10 +242,9 @@ jobs:
           fi
 
       - name: Collect release assets
+        if: steps.target.outputs.publish_stable == 'true' || steps.target.outputs.publish_eap == 'true' || steps.target.outputs.publish_browser == 'true'
         shell: bash
         env:
-          PLUGIN_TARGET: ${{ steps.target.outputs.plugin_target }}
-          BROWSER_TARGET: ${{ steps.target.outputs.browser_target }}
           PUBLISH_STABLE: ${{ steps.target.outputs.publish_stable }}
           PUBLISH_EAP: ${{ steps.target.outputs.publish_eap }}
           PUBLISH_BROWSER: ${{ steps.target.outputs.publish_browser }}
@@ -255,11 +254,6 @@ jobs:
           THEME_VERSION: ${{ steps.versions.outputs.theme_version }}
         run: |
           set -euo pipefail
-
-          full_verify="false"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" || ("${PLUGIN_TARGET}" == "verify_only" && "${BROWSER_TARGET}" == "none") ]]; then
-            full_verify="true"
-          fi
 
           mkdir -p release-assets
 
@@ -272,28 +266,30 @@ jobs:
             cp "${path}" release-assets/
           }
 
-          if [[ "${full_verify}" == "true" || "${PUBLISH_STABLE}" == "true" ]]; then
+          if [[ "${PUBLISH_STABLE}" == "true" ]]; then
             copy_asset "build/distributions/clion-cph-target-runner-${STABLE_PLUGIN_VERSION}.zip"
           fi
 
-          if [[ "${full_verify}" == "true" || "${PUBLISH_EAP}" == "true" ]]; then
+          if [[ "${PUBLISH_EAP}" == "true" ]]; then
             copy_asset "build/distributions/clion-cph-target-runner-${EAP_PLUGIN_VERSION}.zip"
             copy_asset "build/distributions/cph-theme-avemujica-${THEME_VERSION}.zip"
             copy_asset "build/distributions/cph-theme-avemujica.json"
           fi
 
-          if [[ "${full_verify}" == "true" || "${PUBLISH_BROWSER}" == "true" ]]; then
+          if [[ "${PUBLISH_BROWSER}" == "true" ]]; then
             copy_asset "build/distributions/cph-target-runner-browser-${BROWSER_EXTENSION_VERSION}.zip"
           fi
 
           ls -la release-assets
 
       - name: Upload release assets
+        if: steps.target.outputs.publish_stable == 'true' || steps.target.outputs.publish_eap == 'true' || steps.target.outputs.publish_browser == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-assets
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 1
 
   release_stable:
     needs: verify
