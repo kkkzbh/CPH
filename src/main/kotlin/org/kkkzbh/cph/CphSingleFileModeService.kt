@@ -2,6 +2,7 @@ package org.kkkzbh.cph
 
 import com.intellij.execution.RunManager
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.runReadActionBlocking
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -25,14 +26,14 @@ internal object CphSingleFileModePolicy {
         path: String?,
         extension: String?,
         fileName: String?,
-        inProject: Boolean,
+        inProject: () -> Boolean,
         lastObservedPath: String?,
         workingDirectory: String?,
         force: Boolean = false,
     ): CphSingleFileModeRequest? {
         if (!enabled || path.isNullOrBlank()) return null
         if (!force && path == lastObservedPath) return null
-        if (!inProject || extension != "cpp") return null
+        if (extension != "cpp" || !inProject()) return null
         return CphSingleFileModeRequest(
             path = path,
             displayName = fileName?.takeIf { it.isNotBlank() } ?: path.substringAfterLast('/'),
@@ -77,7 +78,7 @@ internal class CphSingleFileModeService(private val project: Project) {
             path = file?.path,
             extension = file?.extension,
             fileName = file?.name,
-            inProject = file?.let(::isProjectFile) == true,
+            inProject = { file?.let(::isProjectFile) == true },
             lastObservedPath = previousPath,
             workingDirectory = state.singleFileWorkingDirectory,
             force = force,
@@ -107,7 +108,9 @@ internal class CphSingleFileModeService(private val project: Project) {
     }
 
     private fun isProjectFile(file: VirtualFile): Boolean {
-        return ProjectFileIndex.getInstance(project).isInContent(file)
+        return runReadActionBlocking {
+            ProjectFileIndex.getInstance(project).isInContent(file)
+        }
     }
 
     companion object {
