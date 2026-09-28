@@ -112,10 +112,12 @@ jobs:
             exit 1
           fi
 
-          echo "stable_plugin_version=${stable_plugin_version}" >> "${GITHUB_OUTPUT}"
-          echo "eap_plugin_version=${eap_plugin_version}" >> "${GITHUB_OUTPUT}"
-          echo "browser_extension_version=${browser_extension_version}" >> "${GITHUB_OUTPUT}"
-          echo "theme_version=${theme_version}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "stable_plugin_version=${stable_plugin_version}"
+            echo "eap_plugin_version=${eap_plugin_version}"
+            echo "browser_extension_version=${browser_extension_version}"
+            echo "theme_version=${theme_version}"
+          } >> "${GITHUB_OUTPUT}"
 
           echo "Stable plugin version: ${stable_plugin_version}"
           echo "EAP plugin version: ${eap_plugin_version}"
@@ -173,11 +175,13 @@ jobs:
               ;;
           esac
 
-          echo "plugin_target=${plugin_target}" >> "${GITHUB_OUTPUT}"
-          echo "browser_target=${browser_target}" >> "${GITHUB_OUTPUT}"
-          echo "publish_stable=${publish_stable}" >> "${GITHUB_OUTPUT}"
-          echo "publish_eap=${publish_eap}" >> "${GITHUB_OUTPUT}"
-          echo "publish_browser=${publish_browser}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "plugin_target=${plugin_target}"
+            echo "browser_target=${browser_target}"
+            echo "publish_stable=${publish_stable}"
+            echo "publish_eap=${publish_eap}"
+            echo "publish_browser=${publish_browser}"
+          } >> "${GITHUB_OUTPUT}"
 
           echo "Plugin target: ${plugin_target}"
           echo "Browser target: ${browser_target}"
