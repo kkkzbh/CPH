@@ -6,6 +6,10 @@
         A CLion competitive-programming tool that manages sample cases for each target or single file, lets you run and compare outputs quickly, configure compiler options and shortcuts, and submit solutions to Codeforces from the active editor file.
     ]]></description>
     <change-notes><![CDATA[
+        <h3>1.2.8</h3>
+        <ul>
+          <li>修复切换纯单文件模式时的读访问异常，确保开关设置和运行配置切换正常完成。</li>
+        </ul>
         <h3>1.2.7</h3>
         <ul>
           <li>EAP 更新源设置改为仅使用公开 API，修复 JetBrains Marketplace 检查报告中的内部 API 调用问题。</li>
