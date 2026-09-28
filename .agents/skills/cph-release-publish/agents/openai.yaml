@@ -1,0 +1,4 @@
+interface:
+  display_name: "CPH Release Publish"
+  short_description: "Publish CPH plugin and browser releases"
+  default_prompt: "Use $cph-release-publish to publish the CPH plugin or browser extension safely."

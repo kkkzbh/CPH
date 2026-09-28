@@ -3,6 +3,8 @@
 .kotlin/
 .plugin-backups/
 build/
+.tmp/
+tmp/
 
 .env
 .env.*
