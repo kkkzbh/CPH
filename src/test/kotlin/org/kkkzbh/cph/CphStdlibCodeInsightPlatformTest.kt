@@ -17,6 +17,10 @@ import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.ClangUrlConverter
 import com.jetbrains.cidr.lang.daemon.clang.clangd.settings.CppModulesStateUtil
 import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.params.ClionCompileCommandParams
 import com.jetbrains.cidr.lang.daemon.clang.clangd.settings.CppModulesStateImpl
+import com.jetbrains.cidr.lang.daemon.clang.clangd.ClangLanguageService
+import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.ClangDaemonContext
+import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.Cpp20Module
+import java.lang.reflect.Proxy
 
 class CphStdlibCodeInsightPlatformTest : HeavyPlatformTestCase() {
     override fun getOpenProjectOptions() = super.getOpenProjectOptions().runPostStartUpActivities(false)
@@ -102,5 +106,66 @@ class CphStdlibCodeInsightPlatformTest : HeavyPlatformTestCase() {
         }
         assertTrue(owner.replace(emptyList()))
         assertTrue(native.isEmpty)
+    }
+
+    fun testModulePublicationPreservesProjectModulesAndClearsTheLanguageServerState() {
+        var enabled = false
+        val context = Proxy.newProxyInstance(
+            ClangDaemonContext::class.java.classLoader, arrayOf(ClangDaemonContext::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getCpp20ModuleMapPath" -> "/cache/cpp20.modulemap"
+                "setCpp20ModulesEnabled" -> { enabled = args!![0] as Boolean; null }
+                else -> error("Unexpected context call: ${method.name}")
+            }
+        } as ClangDaemonContext
+        val converter = ClangUrlConverter()
+        val mappingChanges = mutableListOf<List<Any?>>()
+        val documentChanges = mutableListOf<Pair<String, String>>()
+        val server = Proxy.newProxyInstance(
+            ClangLanguageService::class.java.classLoader, arrayOf(ClangLanguageService::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getContext" -> context
+                "getUrlConverter" -> converter
+                "notifyModuleMappingChanged" -> { mappingChanges.add(args!!.toList()); null }
+                "notifyDocumentChanged" -> { documentChanges.add(args!![0] as String to args[1] as String); null }
+                else -> error("Unexpected language service call: ${method.name}")
+            }
+        } as ClangLanguageService
+        val native = CppModulesStateImpl(project)
+        val projectModule = Cpp20Module("solution", null, null, "/project/solution.cppm", false)
+        native.addCppModule(projectModule)
+        val owner = CphStdlibModuleIndex(native)
+        val command = ClionCompileCommandParams(
+            "file:///project/main.cpp", "file:///project/main.cpp", "/project",
+            listOf("c++", "-std=c++26", "--", "/project/main.cpp"), "", true,
+        )
+        val std = CphStdlibCodeInsightService.standardLibraryModule(
+            "std", command, "file:///sdk/std.cc", "/sdk/std.cc",
+        )
+        owner.replace(listOf(std))
+        CphStdlibCodeInsightService.publishModuleMap(server, native)
+        assertEquals(listOf("std"), mappingChanges.last()[0])
+        assertEquals(listOf(std.compileCommand), mappingChanges.last()[1])
+        assertEquals(listOf(""), mappingChanges.last()[2])
+        assertEquals("file:///cache/cpp20.modulemap", documentChanges.last().first)
+        assertTrue(documentChanges.last().second.contains("module std {"))
+        assertTrue(documentChanges.last().second.contains("module solution {"))
+        assertTrue(enabled)
+
+        owner.replace(emptyList())
+        CphStdlibCodeInsightService.publishModuleMap(server, native)
+        assertEquals(emptyList<String>(), mappingChanges.last()[0])
+        assertFalse(documentChanges.last().second.contains("module std {"))
+        assertTrue(documentChanges.last().second.contains("module solution {"))
+        assertSame(projectModule, native.byPath { it[projectModule.sourcePath] })
+        assertTrue(enabled)
+
+        native.clearCppModules()
+        CphStdlibCodeInsightService.publishModuleMap(server, native)
+        assertFalse(documentChanges.last().second.contains("module solution {"))
+        assertFalse(enabled)
+        assertEquals(3, documentChanges.size)
     }
 }

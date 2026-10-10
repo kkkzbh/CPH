@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.HeavyPlatformTestCase
 import com.intellij.testFramework.PlatformTestUtil
@@ -18,6 +19,7 @@ import com.jetbrains.cidr.lang.workspace.OCWorkspace
 import com.jetbrains.cidr.lang.workspace.compiler.GCCCompilerKind
 import com.jetbrains.cidr.lang.workspace.moduleRoots.ModuleSearchPath
 import java.io.File
+import kotlinx.coroutines.runBlocking
 
 class CphStdlibWorkspacePlatformTest : HeavyPlatformTestCase() {
     override fun getOpenProjectOptions() = super.getOpenProjectOptions().runPostStartUpActivities(false)
@@ -32,7 +34,12 @@ class CphStdlibWorkspacePlatformTest : HeavyPlatformTestCase() {
         val source = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(disk)!!
         val modules = listOf("std.cc", "std.compat.cc").map { File(dir, it).apply { writeText("export module ${it.removeSuffix(".cc")};") } }
         val workspace = OCWorkspace.getInstance(project)
-        workspace.javaClass.getMethod("initComponent").invoke(workspace)
+        val initializer = workspace.javaClass.classLoader
+            .loadClass("com.jetbrains.cidr.lang.workspace.OCWorkspaceImpl\$InitializationActivity")
+            .getConstructor().newInstance() as ProjectActivity
+        PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread {
+            runBlocking { initializer.execute(project) }
+        })
         fun rebuild() {
             val model = workspace.getModifiableModel("SINGLE_FILE", true)
             val configuration = model.addConfiguration("main-test", "main.cpp", OCVariant("test"))

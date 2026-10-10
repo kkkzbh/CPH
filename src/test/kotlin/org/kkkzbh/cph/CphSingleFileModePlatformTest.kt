@@ -2,7 +2,6 @@ package org.kkkzbh.cph
 
 import com.intellij.codeInsight.CodeInsightSettings
 import com.intellij.execution.RunManager
-import com.intellij.mock.Mock
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
@@ -83,10 +82,9 @@ class CphSingleFileModePlatformTest : HeavyPlatformTestCase() {
         runInEdtAndWait {
             if (inProject) ModuleRootModificationUtil.addContentRoot(module, directory.path)
             val file = getVirtualFile(source)
-            // Supply editor selection while keeping the real VFS and project index.
-            project.replaceService(FileEditorManager::class.java, object : Mock.MyFileEditorManager() {
-                override fun getSelectedFiles() = arrayOf(file)
-            }, testRootDisposable)
+            project.replaceService(
+                FileEditorManager::class.java, SelectedFileEditorManager(file), testRootDisposable,
+            )
         }
         return source
     }

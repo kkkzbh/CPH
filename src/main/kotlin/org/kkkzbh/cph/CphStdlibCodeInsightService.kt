@@ -1,5 +1,6 @@
 package org.kkkzbh.cph
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ApplicationInfo
@@ -9,6 +10,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.jetbrains.cidr.lang.daemon.clang.clangd.ClangLanguageService
 import com.jetbrains.cidr.lang.daemon.clang.clangd.ClangLanguageServiceProvider
 import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.ClangIdeFacade
 import com.jetbrains.cidr.lang.daemon.clang.clangd.lsp.ClangUrlConverter
@@ -99,7 +102,12 @@ internal class CphStdlibCodeInsightService(private val project: Project) : Dispo
     }
 
     private fun publish() {
-        CppModulesStateUtil.updateModuleMap(project.service<CppModulesState>(), project)
+        // A stopped server receives the current module state when it starts again.
+        val server = ClangLanguageServiceProvider.getIfStarted(project) ?: return
+        publishModuleMap(server, project.service<CppModulesState>())
+        ApplicationManager.getApplication().invokeLater(
+            { DaemonCodeAnalyzer.getInstance(project).restart(this) }, project.disposed,
+        )
     }
 
     @Synchronized
@@ -109,6 +117,22 @@ internal class CphStdlibCodeInsightService(private val project: Project) : Dispo
     }
 
     companion object {
+        internal fun publishModuleMap(server: ClangLanguageService, state: CppModulesState) {
+            val context = server.context
+            val modules = state.byPath { it.values.sortedBy { module -> module.name }.toMutableList() }
+            val configured = modules.filter { it.compileCommand != null }
+            server.notifyModuleMappingChanged(
+                configured.map { it.name },
+                configured.map { checkNotNull(it.compileCommand) },
+                configured.map { it.ppDefines },
+            )
+            server.notifyDocumentChanged(
+                VirtualFileManager.constructUrl("file", context.cpp20ModuleMapPath),
+                CppModulesStateUtil.getAsCpp20ModuleMapImpl(server.urlConverter, modules),
+            )
+            context.isCpp20ModulesEnabled = modules.isNotEmpty()
+        }
+
         internal fun moduleCompilationCommand(
             facade: ClangIdeFacade,
             converter: ClangUrlConverter,

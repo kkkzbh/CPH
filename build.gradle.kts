@@ -1,4 +1,5 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.gradle.api.GradleException
 import org.gradle.api.tasks.bundling.Zip
@@ -163,6 +164,9 @@ intellijPlatform {
     pluginVerification {
         ides {
             recommended()
+            latest {
+                channels = listOf(ProductRelease.Channel.EAP)
+            }
         }
     }
 }
